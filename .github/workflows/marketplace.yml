@@ -9,6 +9,10 @@ on:
     - cron: "*/30 * * * *"
   workflow_dispatch: # manual "Run workflow" button
 
+concurrency:
+  group: marketplace-scan
+  cancel-in-progress: false
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -37,13 +41,24 @@ jobs:
           echo "$FACEBOOK_STORAGE_STATE_B64" | base64 --decode > storage_state.json
           python -c "import json; d=json.load(open('storage_state.json')); assert any(c['name']=='c_user' for c in d.get('cookies',[]))"
 
-      - name: Restore seen.db cache
-        uses: actions/cache@v4
+      - name: Restore seen.db
+        uses: actions/cache/restore@v4
         with:
           path: data/seen.db
-          key: seen-db-v1-${{ github.run_id }}
+          key: seen-db-${{ github.run_id }}
           restore-keys: |
-            seen-db-v1-
+            seen-db-
+
+      - name: Ensure / seed seen.db
+        env:
+          SEEN_DB_B64: ${{ secrets.SEEN_DB_B64 }}
+        run: |
+          mkdir -p data
+          if [ ! -f data/seen.db ] && [ -n "$SEEN_DB_B64" ]; then
+            echo "$SEEN_DB_B64" | base64 --decode > data/seen.db
+            echo "Seeded seen.db from secret"
+          fi
+          ls -la data || true
 
       - name: Run one Marketplace scan
         env:
@@ -53,9 +68,9 @@ jobs:
           FACEBOOK_STORAGE_STATE: storage_state.json
         run: python main.py --once
 
-      - name: Keep seen.db for next run
+      - name: Save seen.db for next run
         if: always()
         uses: actions/cache/save@v4
         with:
           path: data/seen.db
-          key: seen-db-v1-${{ github.run_id }}
+          key: seen-db-${{ github.run_id }}
