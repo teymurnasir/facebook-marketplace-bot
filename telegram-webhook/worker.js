@@ -811,7 +811,7 @@ async function handleCallback(env, cq) {
         "⏰ <b>Auto scan interval</b>\n" +
         CANADA_NOTE +
         `\n\nCurrent: <b>${formatInterval(cfg.poll_interval_minutes)}</b>\n` +
-        "This controls how often the cloud timer runs using your Telegram settings.\n" +
+        "Cloud checks about every 15 minutes; a scan starts only when this interval has passed.\n" +
         "/scan always works immediately (ignores this timer).",
       parse_mode: "HTML",
       reply_markup: intervalKeyboard(cfg.poll_interval_minutes),
@@ -1365,19 +1365,24 @@ async function startCustomSearch(env, chatId) {
   await promptCarName(env, chatId, w, { custom: true });
 }
 
-async function scheduledScan(env) {
-  // Tick every 5 min; only dispatch when Telegram poll_interval_minutes elapsed
+async function scheduledScan(env, { source = "timer" } = {}) {
+  // Called often (GitHub tick ~15m + CF cron). Only dispatch when Telegram interval elapsed.
   const cfg = await getConfig(env);
   const intervalMin = Number(cfg.poll_interval_minutes);
   if (!intervalMin || intervalMin <= 0) {
-    return; // auto off — silent
+    return { ok: true, skipped: "auto_off" };
   }
 
   const lastRaw = await env.SETTINGS.get("last_auto_scan_at");
   const lastAt = lastRaw ? Number(lastRaw) : 0;
   const dueAt = lastAt + intervalMin * 60 * 1000;
   if (lastAt && Date.now() < dueAt) {
-    return; // not due yet — silent
+    return {
+      ok: true,
+      skipped: "not_due",
+      next_due_ms: dueAt,
+      interval_min: intervalMin,
+    };
   }
 
   const block = scanBlockReason(cfg);
@@ -1392,25 +1397,28 @@ async function scheduledScan(env) {
   };
   if (block) {
     await notify(block + "\n\n(from auto timer)");
-    return;
+    return { ok: false, skipped: "blocked" };
   }
   try {
-    await dispatchScan(env);
+    // Mark due time first to avoid double-dispatch from overlapping ticks
     await env.SETTINGS.put("last_auto_scan_at", String(Date.now()));
+    await dispatchScan(env);
     await notify(
       `⏰ <b>Auto scan</b> started (${formatInterval(intervalMin)}).\n` +
         "Using your Telegram /settings.\n" +
         `🚗 ${(cfg.searches || []).length} car(s) · 📍 ${(cfg.market_areas || []).length} location(s)`
     );
+    return { ok: true, started: true, source, interval_min: intervalMin };
   } catch (err) {
     await notify(`❌ Auto timer failed to start scan:\n${String(err.message || err)}`);
+    return { ok: false, error: String(err.message || err) };
   }
 }
 
 export default {
-  // Cloudflare Cron Trigger — checks every 5 min; interval set in Telegram
+  // Cloudflare cron (Free plan often only fires ~hourly) — backup tick
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(scheduledScan(env));
+    ctx.waitUntil(scheduledScan(env, { source: "cloudflare_cron" }));
   },
 
   async fetch(request, env) {
@@ -1435,6 +1443,19 @@ export default {
       return new Response(raw, {
         headers: { "content-type": "application/json" },
       });
+    }
+
+    // Primary reliable timer: GitHub Actions pings this every ~15 min
+    if (
+      (request.method === "GET" || request.method === "POST") &&
+      url.pathname === "/tick"
+    ) {
+      const token = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
+      if (!token || token !== env.CONFIG_TOKEN) {
+        return new Response("unauthorized", { status: 401 });
+      }
+      const result = await scheduledScan(env, { source: "github_tick" });
+      return Response.json(result);
     }
 
     if (request.method !== "POST") return new Response("ok");

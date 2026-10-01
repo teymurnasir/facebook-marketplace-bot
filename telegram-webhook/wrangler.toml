@@ -2,10 +2,9 @@ name = "marketplace-telegram-webhook"
 main = "worker.js"
 compatibility_date = "2024-11-01"
 
-# Checks every 5 min; actual scan interval comes from Telegram settings
-# (poll_interval_minutes in KV — default 30)
+# Backup hourly-ish tick (Free CF cron is coarse). Primary tick = GitHub auto-tick.yml → /tick
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["0 * * * *"]
 
 [[kv_namespaces]]
 binding = "SETTINGS"
