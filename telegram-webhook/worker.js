@@ -1294,7 +1294,40 @@ async function startCustomSearch(env, chatId) {
   await promptCarName(env, chatId, w, { custom: true });
 }
 
+async function scheduledScan(env) {
+  // Same source of truth as /scan: live Telegram KV settings loaded by Actions
+  const cfg = await getConfig(env);
+  const block = scanBlockReason(cfg);
+  const chatIds = String(env.TELEGRAM_CHAT_IDS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const notify = async (text) => {
+    for (const chatId of chatIds) {
+      await tg(env, "sendMessage", { chat_id: chatId, text, parse_mode: "HTML" });
+    }
+  };
+  if (block) {
+    await notify(block + "\n\n(from 30‑min timer)");
+    return;
+  }
+  try {
+    await dispatchScan(env);
+    await notify(
+      "⏰ <b>30‑min timer</b> started a scan with your Telegram settings.\n" +
+        `🚗 ${(cfg.searches || []).length} car(s) · 📍 ${(cfg.market_areas || []).length} location(s)`
+    );
+  } catch (err) {
+    await notify(`❌ 30‑min timer failed to start scan:\n${String(err.message || err)}`);
+  }
+}
+
 export default {
+  // Cloudflare Cron Trigger — reliable every-30-min schedule
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(scheduledScan(env));
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url);
 

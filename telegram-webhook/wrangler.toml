@@ -2,6 +2,10 @@ name = "marketplace-telegram-webhook"
 main = "worker.js"
 compatibility_date = "2024-11-01"
 
+# Primary 30-min timer (GitHub Actions cron is unreliable)
+[triggers]
+crons = ["*/30 * * * *"]
+
 [[kv_namespaces]]
 binding = "SETTINGS"
 id = "5c38578fe2534736ae844cfb6bfc2453"

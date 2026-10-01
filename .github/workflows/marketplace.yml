@@ -5,8 +5,8 @@ name: Marketplace scan
 
 on:
   schedule:
-    # Every 30 minutes (UTC)
-    - cron: "*/30 * * * *"
+    # Backup timer (GitHub schedules are often delayed). Primary timer is Cloudflare cron.
+    - cron: "0,30 * * * *"
   workflow_dispatch:
     inputs:
       job_id:
