@@ -2,9 +2,8 @@ name = "marketplace-telegram-webhook"
 main = "worker.js"
 compatibility_date = "2024-11-01"
 
-# Backup hourly-ish tick (Free CF cron is coarse). Primary tick = GitHub auto-tick.yml → /tick
-[triggers]
-crons = ["0 * * * *"]
+# No Cloudflare cron — Free plan was only firing hourly.
+# Primary timer: GitHub auto-tick.yml → POST /tick (respects Telegram interval).
 
 [[kv_namespaces]]
 binding = "SETTINGS"

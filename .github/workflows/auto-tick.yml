@@ -1,12 +1,14 @@
-# Pings the Cloudflare Worker every 15 minutes.
-# Worker decides whether a scan is due from Telegram poll_interval_minutes.
-# (Cloudflare Free cron often only runs about once per hour.)
+# Asks the Worker whether a scan is due (Telegram poll_interval_minutes).
+# Explicit :00/:15/:30/:45 crons — GitHub's */15 is unreliable.
 
 name: Auto scan tick
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "0 * * * *"
+    - cron: "15 * * * *"
+    - cron: "30 * * * *"
+    - cron: "45 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -25,7 +27,7 @@ jobs:
             exit 1
           fi
           BASE="${SETTINGS_CONFIG_URL%/config}"
-          echo "Pinging ${BASE}/tick"
+          echo "Pinging ${BASE}/tick at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           curl -fsS -X POST \
             -H "Authorization: Bearer ${SETTINGS_CONFIG_TOKEN}" \
             "${BASE}/tick" | tee /tmp/tick.json
@@ -38,4 +40,7 @@ jobs:
             print("Scan dispatched")
           elif d.get("skipped"):
             print("Skipped:", d.get("skipped"))
+            if d.get("next_due_ms"):
+              from datetime import datetime, timezone
+              print("Next due UTC:", datetime.fromtimestamp(d["next_due_ms"]/1000, tz=timezone.utc).isoformat())
           PY
