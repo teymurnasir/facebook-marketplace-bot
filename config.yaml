@@ -1,0 +1,70 @@
+# Canadian Facebook Marketplace car alerts
+#
+# `locations` = Marketplace city slugs we actually open (keep this short;
+#  Facebook often already shows nearby GTA cities from these hubs).
+# `location_keywords` = post-filter on the listing's city text.
+
+# Hub cities to open. Toronto (~40km) already returns most GTA listings;
+# Hamilton covers the further west end. Keywords below still filter cities.
+locations:
+  - toronto
+  - hamilton
+
+# Optional: after scrape, keep only listings whose location text
+# matches one of these (case-insensitive substring). Leave empty to keep all.
+location_keywords:
+  - Toronto
+  - Richmond Hill
+  - Brampton
+  - North York
+  - Vaughan
+  - Markham
+  - East York
+  - Mississauga
+  - Scarborough
+  - Hamilton
+
+searches:
+  - name: Mazda 3
+    query: "mazda 3"
+    min_year: 2010
+    max_year: 2014
+    min_price: 300
+    max_price: 2300
+    # Title/body must match at least one of these (case-insensitive)
+    must_include_any:
+      - mazda 3
+      - mazda3
+    # Prefer body styles; listing is kept if any match OR if none of these words appear
+    # (so "mazda 3 gs" still passes). Set require_body_style: true to enforce.
+    body_styles:
+      - sedan
+      - hatchback
+      - hatch
+    require_body_style: false
+
+  - name: Kia Optima Hybrid
+    query: "kia optima hybrid"
+    min_year: 2011
+    max_year: 2017
+    min_price: 1000
+    max_price: 3000
+    must_include_any:
+      - optima
+      - k5
+    must_include_all:
+      - hybrid
+    body_styles:
+      - sedan
+    require_body_style: false
+
+# Scraper behaviour
+scraper:
+  # Newest listings first
+  sort_by: creation_time_descend
+  # Max scroll rounds per search URL (more = more listings, slower)
+  max_scrolls: 3
+  # Pause between location searches (seconds) to reduce blocks
+  delay_between_searches_sec: 4
+  # Reuse one browser for the whole cycle
+  timeout_ms: 45000

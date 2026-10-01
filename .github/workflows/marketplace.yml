@@ -1,0 +1,61 @@
+# Runs every 30 minutes in the cloud (no laptop needed).
+# Repo must be PRIVATE — it uses your Facebook session secret.
+
+name: Marketplace scan
+
+on:
+  schedule:
+    # Every 30 minutes (UTC)
+    - cron: "*/30 * * * *"
+  workflow_dispatch: # manual "Run workflow" button
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
+
+      - name: Restore Facebook session
+        env:
+          FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
+        run: |
+          if [ -z "$FACEBOOK_STORAGE_STATE_B64" ]; then
+            echo "Missing secret FACEBOOK_STORAGE_STATE_B64"
+            exit 1
+          fi
+          echo "$FACEBOOK_STORAGE_STATE_B64" | base64 --decode > storage_state.json
+          python -c "import json; d=json.load(open('storage_state.json')); assert any(c['name']=='c_user' for c in d.get('cookies',[]))"
+
+      - name: Restore seen.db cache
+        uses: actions/cache@v4
+        with:
+          path: data/seen.db
+          key: seen-db-v1-${{ github.run_id }}
+          restore-keys: |
+            seen-db-v1-
+
+      - name: Run one Marketplace scan
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HEADLESS: "true"
+          FACEBOOK_STORAGE_STATE: storage_state.json
+        run: python main.py --once
+
+      - name: Keep seen.db for next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/seen.db
+          key: seen-db-v1-${{ github.run_id }}

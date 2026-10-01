@@ -1,0 +1,13 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+data/
+cookies.json
+*.db
+.DS_Store
+playwright-report/
+storage_state.json

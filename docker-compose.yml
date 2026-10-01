@@ -1,0 +1,13 @@
+services:
+  marketplace-bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      HEADLESS: "true"
+      POLL_INTERVAL_MINUTES: "30"
+      FACEBOOK_STORAGE_STATE: /data/storage_state.json
+    volumes:
+      - ./storage_state.json:/data/storage_state.json:ro
+      - ./data:/app/data
