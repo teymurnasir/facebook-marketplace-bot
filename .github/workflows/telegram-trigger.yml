@@ -1,12 +1,12 @@
 # Listens for Telegram /scan and starts the Marketplace workflow.
-# Polls every 2 minutes (lightweight — no Playwright).
+# Note: GitHub may delay cron jobs; */5 is more reliable than every minute.
 
 name: Telegram /scan trigger
 
 on:
   schedule:
-    # Check Telegram about every minute for /scan
-    - cron: "* * * * *"
+    # Check Telegram every 5 minutes for /scan
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -63,6 +63,6 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'marketplace.yml',
-              ref: context.ref.replace('refs/heads/', '') || 'main',
+              ref: 'main',
             });
             console.log('Dispatched marketplace.yml');
