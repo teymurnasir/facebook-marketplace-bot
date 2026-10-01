@@ -5,7 +5,8 @@ name: Telegram /scan trigger
 
 on:
   schedule:
-    - cron: "*/2 * * * *"
+    # Check Telegram about every minute for /scan
+    - cron: "* * * * *"
   workflow_dispatch:
 
 permissions:

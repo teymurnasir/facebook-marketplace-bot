@@ -88,13 +88,21 @@ docker run -d --restart unless-stopped --name marketplace-bot \
 
 ## Trigger a scan from Telegram
 
-Message your bot (only your chat id works):
+In the authorized chat/group:
 
 - `/scan` — start a Marketplace search now on GitHub Actions  
-- `/search` or `/run` — same as `/scan`  
+- `/id` — show this chat’s Telegram id (use this for groups)  
 - `/help` — command list  
 
-A lightweight workflow checks Telegram about every **2 minutes**, then starts the full scan. You’ll get “starting…” quickly, then results when the scan finishes (a few minutes).
+A workflow checks Telegram about every **1 minute**, replies that the scan is starting, then runs the full search (usually 3–10 minutes).
+
+### Use a group
+1. Add the bot to the group  
+2. In the group send `/id` (or check Actions logs / getUpdates)  
+3. Set GitHub secret `TELEGRAM_CHAT_ID` to that group id (example: `-5313360485`)  
+4. Optional: multiple chats → `-5313360485,5690531169`  
+5. In [@BotFather](https://t.me/BotFather): `/setprivacy` → your bot → **Disable** (so it sees group commands reliably)  
+6. Send `/scan` in the group again  
 
 Automatic scans every 30 minutes still run as well.
 

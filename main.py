@@ -128,6 +128,11 @@ def main() -> int:
 
     try:
         while True:
+            if telegram and once and not seed:
+                telegram.send_text(
+                    "🚀 Marketplace scan is running now…\n"
+                    "Please wait — results will arrive in this chat."
+                )
             run_once(
                 scraper,
                 store,

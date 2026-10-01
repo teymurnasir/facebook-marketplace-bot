@@ -12,11 +12,32 @@ import httpx
 
 COMMANDS = {"/scan", "/search", "/run"}
 HELP_COMMANDS = {"/start", "/help"}
+ID_COMMANDS = {"/id", "/chatid"}
+
+
+def _authorized_ids() -> set[str]:
+    raw = os.environ.get("TELEGRAM_CHAT_ID", "")
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _send(client: httpx.Client, base: str, chat_id: str | int, text: str) -> None:
+    client.post(
+        f"{base}/sendMessage",
+        json={
+            "chat_id": chat_id,
+            "text": text,
+            "disable_web_page_preview": True,
+        },
+    )
 
 
 def main() -> int:
     token = os.environ["TELEGRAM_BOT_TOKEN"]
-    chat_id = str(os.environ["TELEGRAM_CHAT_ID"])
+    allowed = _authorized_ids()
+    if not allowed:
+        print("TELEGRAM_CHAT_ID missing", file=sys.stderr)
+        return 1
+
     offset_path = Path(os.environ.get("TELEGRAM_OFFSET_PATH", "data/telegram_offset.txt"))
     offset_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -27,10 +48,26 @@ def main() -> int:
             offset = int(raw)
 
     base = f"https://api.telegram.org/bot{token}"
-    with httpx.Client(timeout=30) as client:
+    with httpx.Client(timeout=30, trust_env=False) as client:
+        # Make /scan show in Telegram command menu
+        client.post(
+            f"{base}/setMyCommands",
+            json={
+                "commands": [
+                    {"command": "scan", "description": "Run Marketplace search now"},
+                    {"command": "help", "description": "How this bot works"},
+                    {"command": "id", "description": "Show this chat's Telegram id"},
+                ]
+            },
+        )
+
         resp = client.get(
             f"{base}/getUpdates",
-            params={"offset": offset, "timeout": 0, "allowed_updates": json.dumps(["message"])},
+            params={
+                "offset": offset,
+                "timeout": 0,
+                "allowed_updates": json.dumps(["message"]),
+            },
         )
         resp.raise_for_status()
         data = resp.json()
@@ -47,51 +84,87 @@ def main() -> int:
             max_update_id = max(max_update_id, uid)
             msg = upd.get("message") or {}
             chat = msg.get("chat") or {}
-            if str(chat.get("id")) != chat_id:
+            chat_id = chat.get("id")
+            if chat_id is None:
                 continue
+            chat_id_s = str(chat_id)
             text = (msg.get("text") or "").strip()
             if not text:
                 continue
             cmd = text.split()[0].split("@")[0].lower()
 
+            if cmd in ID_COMMANDS:
+                _send(
+                    client,
+                    base,
+                    chat_id,
+                    (
+                        f"Chat id: `{chat_id}`\n"
+                        f"Type: {chat.get('type')}\n"
+                        f"Title: {chat.get('title') or chat.get('first_name') or 'n/a'}\n\n"
+                        "Put this value in GitHub secret TELEGRAM_CHAT_ID "
+                        "(comma-separated if several chats)."
+                    ).replace("`", ""),
+                )
+                continue
+
             if cmd in HELP_COMMANDS:
-                client.post(
-                    f"{base}/sendMessage",
-                    json={
-                        "chat_id": chat_id,
-                        "text": (
-                            "🇨🇦 Marketplace bot commands:\n"
-                            "/scan — run a search now (GitHub Actions)\n"
-                            "/help — show this message\n\n"
-                            "Automatic scans also run every 30 minutes."
-                        ),
-                    },
+                _send(
+                    client,
+                    base,
+                    chat_id,
+                    (
+                        "🇨🇦 Canada Marketplace car alerts\n\n"
+                        "Commands:\n"
+                        "/scan — start a search now\n"
+                        "/id — show this chat’s id\n"
+                        "/help — this message\n\n"
+                        "Also runs automatically every 30 minutes.\n"
+                        "Same cars are never sent twice."
+                    ),
                 )
                 continue
 
             if cmd in COMMANDS:
+                if chat_id_s not in allowed:
+                    _send(
+                        client,
+                        base,
+                        chat_id,
+                        (
+                            "⚠️ This chat is not authorized for /scan yet.\n\n"
+                            f"This chat id is: {chat_id}\n"
+                            "Add it to GitHub secret TELEGRAM_CHAT_ID, then try /scan again."
+                        ),
+                    )
+                    continue
+
                 trigger = True
-                client.post(
-                    f"{base}/sendMessage",
-                    json={
-                        "chat_id": chat_id,
-                        "text": "🔎 Got it — starting a Marketplace scan on GitHub now…",
-                    },
+                _send(
+                    client,
+                    base,
+                    chat_id,
+                    (
+                        "🔎 Scan request received!\n"
+                        "⏳ Starting Marketplace search on GitHub…\n"
+                        "⏱ Usually 3–10 minutes.\n"
+                        "📬 Only NEW cars will be posted (no duplicates)."
+                    ),
                 )
 
         if updates:
-            # Advance offset so the same messages are not handled again
             offset_path.write_text(str(max_update_id + 1), encoding="utf-8")
         elif not offset_path.exists():
             offset_path.write_text("0", encoding="utf-8")
 
-    # GitHub Actions expression-friendly outputs
     github_output = os.environ.get("GITHUB_OUTPUT")
     if github_output:
         with open(github_output, "a", encoding="utf-8") as fh:
             fh.write(f"should_scan={'true' if trigger else 'false'}\n")
 
-    next_offset = offset_path.read_text(encoding="utf-8").strip() if offset_path.exists() else "0"
+    next_offset = (
+        offset_path.read_text(encoding="utf-8").strip() if offset_path.exists() else "0"
+    )
     print(f"updates={len(updates)} trigger={trigger} next_offset={next_offset}")
     return 0
 
