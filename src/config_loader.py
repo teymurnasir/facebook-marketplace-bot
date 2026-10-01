@@ -65,22 +65,19 @@ def load_config(path: str | Path = "config.yaml") -> dict[str, Any]:
         )
 
     locations = list(data.get("locations") or [])
+    # Legacy migrate: only keep the first location — user adds more in Telegram
     if not market_areas and locations:
+        slug = str(locations[0])
         market_areas = [
             {
                 "slug": slug,
-                "label": str(slug).replace("-", " ").title(),
+                "label": slug.replace("-", " ").title() + ", ON",
                 "radius_km": 65,
             }
-            for slug in locations
         ]
-    if not locations and market_areas:
+    if market_areas:
         locations = [a["slug"] for a in market_areas]
-    if not locations:
-        locations = ["toronto"]
-        market_areas = [
-            {"slug": "toronto", "label": "Toronto, ON", "radius_km": 65}
-        ]
+    # Empty locations allowed in file; Telegram /scan blocks until user adds one
 
     return {
         "country": data.get("country") or "CA",

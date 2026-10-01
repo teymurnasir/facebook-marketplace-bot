@@ -103,16 +103,18 @@ function normalizeConfig(cfg) {
   const out = structuredClone(cfg || defaultConfig);
   out.country = "CA";
   out.max_mileage_km = out.max_mileage_km || 250000;
-  if (!Array.isArray(out.market_areas) || !out.market_areas.length) {
-    const locs = out.locations || [];
-    out.market_areas = locs.map((slug) => {
-      const hit = CANADA_CITIES.find((c) => c.slug === slug);
-      return {
+  if (!Array.isArray(out.market_areas)) out.market_areas = [];
+  // Migrate legacy locations list → at most ONE area (user adds more themselves)
+  if (!out.market_areas.length && Array.isArray(out.locations) && out.locations.length) {
+    const slug = String(out.locations[0]);
+    const hit = CANADA_CITIES.find((c) => c.slug === slug);
+    out.market_areas = [
+      {
         slug,
-        label: hit?.label || String(slug).replaceAll("-", " "),
+        label: hit?.label || slug.replaceAll("-", " "),
         radius_km: 65,
-      };
-    });
+      },
+    ];
   }
   out.locations = out.market_areas.map((a) => a.slug);
   out.location_keywords = out.location_keywords || [];
@@ -154,13 +156,30 @@ async function setWizard(env, chatId, state) {
 }
 
 function syncAreas(cfg) {
-  cfg.locations = (cfg.market_areas || []).map((a) => a.slug);
-  if (!cfg.locations.length) {
-    cfg.market_areas = [
-      { slug: "toronto", label: "Toronto, ON", radius_km: 65 },
-    ];
-    cfg.locations = ["toronto"];
+  cfg.market_areas = cfg.market_areas || [];
+  cfg.locations = cfg.market_areas.map((a) => a.slug);
+}
+
+function hasLocations(cfg) {
+  return Array.isArray(cfg.market_areas) && cfg.market_areas.length > 0;
+}
+
+function hasCars(cfg) {
+  return Array.isArray(cfg.searches) && cfg.searches.length > 0;
+}
+
+/** Returns error text if scan cannot start, else null */
+function scanBlockReason(cfg) {
+  if (!hasCars(cfg)) {
+    return "⚠️ Add at least one <b>car</b> in /settings before scanning.";
   }
+  if (!hasLocations(cfg)) {
+    return (
+      "⚠️ Add at least one <b>location + radius</b> in /settings before scanning.\n" +
+      "Locations work like cars: add only the cities you want (each city = more search work)."
+    );
+  }
+  return null;
 }
 
 function formatSettings(cfg) {
@@ -168,22 +187,30 @@ function formatSettings(cfg) {
     "⚙️ <b>Shared settings</b> (whole group)",
     CANADA_NOTE,
     "",
-    "<b>Locations + radius</b>",
+    "<b>Locations</b> (add only what you need — each one is searched)",
   ];
-  if (!(cfg.market_areas || []).length) lines.push("• (none — add one)");
-  for (const a of cfg.market_areas || []) {
-    lines.push(`• ${escapeHtml(a.label)} · <b>${a.radius_km} km</b>`);
+  if (!hasLocations(cfg)) {
+    lines.push("• ⚠️ <b>None</b> — add a location or /scan will be blocked");
+  } else {
+    for (const a of cfg.market_areas) {
+      lines.push(`• ${escapeHtml(a.label)} · <b>${a.radius_km} km</b>`);
+    }
   }
   lines.push("");
-  (cfg.searches || []).forEach((s, i) => {
-    lines.push(`<b>${i + 1}. ${escapeHtml(s.name)}</b>`);
-    lines.push(`   Query: <code>${escapeHtml(s.query)}</code>`);
-    lines.push(`   Years: ${s.min_year}–${s.max_year}`);
-    lines.push(`   Price: $${s.min_price}–$${s.max_price}`);
-    lines.push(`   Max km: ${(s.max_mileage_km ?? 250000).toLocaleString()}`);
-    lines.push("");
-  });
-  lines.push("Buttons below · /customsearch for a one-off run");
+  lines.push("<b>Cars</b> (each has its own max km)");
+  if (!hasCars(cfg)) {
+    lines.push("• ⚠️ <b>None</b> — add a car or /scan will be blocked");
+  } else {
+    (cfg.searches || []).forEach((s, i) => {
+      lines.push(`<b>${i + 1}. ${escapeHtml(s.name)}</b>`);
+      lines.push(`   Query: <code>${escapeHtml(s.query)}</code>`);
+      lines.push(`   Years: ${s.min_year}–${s.max_year}`);
+      lines.push(`   Price: $${s.min_price}–$${s.max_price}`);
+      lines.push(`   Max km: ${(s.max_mileage_km ?? 250000).toLocaleString()}`);
+      lines.push("");
+    });
+  }
+  lines.push("/customsearch = one-off run (not saved)");
   return lines.join("\n");
 }
 
@@ -194,9 +221,7 @@ function mainKeyboard() {
         { text: "👀 View", callback_data: "set:view" },
         { text: "🚗 Cars", callback_data: "set:cars" },
       ],
-      [
-        { text: "📍 Locations + km", callback_data: "set:areas" },
-      ],
+      [{ text: "📍 Locations", callback_data: "set:areas" }],
       [{ text: "❌ Close", callback_data: "set:close" }],
     ],
   };
@@ -205,7 +230,7 @@ function mainKeyboard() {
 function carsKeyboard(cfg) {
   const rows = (cfg.searches || []).map((s, i) => [
     { text: `✏️ ${s.name}`, callback_data: `car:edit:${i}` },
-    { text: "🗑", callback_data: `car:delask:${i}` },
+    { text: "🗑 Delete", callback_data: `car:delask:${i}` },
   ]);
   rows.push([{ text: "➕ Add car", callback_data: "car:add" }]);
   rows.push([{ text: "⬅️ Menu", callback_data: "set:menu" }]);
@@ -213,16 +238,31 @@ function carsKeyboard(cfg) {
 }
 
 function areasKeyboard(cfg) {
-  const rows = (cfg.market_areas || []).map((a, i) => [
-    {
-      text: `${a.label} · ${a.radius_km} km`,
-      callback_data: `area:edit:${i}`,
-    },
-    { text: "🗑", callback_data: `area:del:${i}` },
+  const areas = cfg.market_areas || [];
+  const rows = areas.map((a, i) => [
+    { text: `✏️ ${a.label}`, callback_data: `area:edit:${i}` },
+    { text: "🗑 Delete", callback_data: `area:delask:${i}` },
   ]);
   rows.push([{ text: "➕ Add location", callback_data: "area:add" }]);
   rows.push([{ text: "⬅️ Menu", callback_data: "set:menu" }]);
   return { inline_keyboard: rows };
+}
+
+function areasMenuText(cfg) {
+  const n = (cfg.market_areas || []).length;
+  let text =
+    "📍 <b>Locations</b> (same idea as cars)\n" +
+    CANADA_NOTE +
+    "\n\n" +
+    "1) Tap <b>Add location</b> → pick a Canadian city\n" +
+    "2) Choose <b>km radius</b>\n" +
+    "3) Add more cities anytime — each location is searched separately\n\n";
+  if (!n) {
+    text += "⚠️ <b>No locations yet</b> — you must add at least one before /scan.";
+  } else {
+    text += `<b>Saved (${n})</b> — tap ✏️ to change radius, 🗑 to remove:`;
+  }
+  return text;
 }
 
 function cityPickerKeyboard(page = 0, prefix = "locpick") {
@@ -718,10 +758,7 @@ async function handleCallback(env, cq) {
     await tg(env, "editMessageText", {
       chat_id: chatId,
       message_id: cq.message.message_id,
-      text:
-        "📍 <b>Locations + search radius</b>\n" +
-        CANADA_NOTE +
-        "\n\nLike Facebook: pick a city, then km radius.\nTap a row to change radius, or add/remove.",
+      text: areasMenuText(cfg),
       parse_mode: "HTML",
       reply_markup: areasKeyboard(cfg),
     });
@@ -795,16 +832,21 @@ async function handleCallback(env, cq) {
     cfg.market_areas = cfg.market_areas || [];
     const existing = cfg.market_areas.findIndex((a) => a.slug === city.slug);
     const area = { slug: city.slug, label: city.label, radius_km: km };
-    if (existing >= 0) cfg.market_areas[existing] = area;
-    else cfg.market_areas.push(area);
+    let note;
+    if (existing >= 0) {
+      cfg.market_areas[existing] = area;
+      note = `✅ Updated <b>${escapeHtml(city.label)}</b> · ${km} km (already in list)`;
+    } else {
+      cfg.market_areas.push(area);
+      note = `✅ Added <b>${escapeHtml(city.label)}</b> · ${km} km`;
+    }
     syncAreas(cfg);
     await saveConfig(env, cfg);
     await setWizard(env, chatId, null);
     await tg(env, "editMessageText", {
       chat_id: chatId,
       message_id: cq.message.message_id,
-      text:
-        `✅ Added <b>${escapeHtml(city.label)}</b> · ${km} km\n\n` + formatSettings(cfg),
+      text: `${note}\n\n${areasMenuText(cfg)}`,
       parse_mode: "HTML",
       reply_markup: areasKeyboard(cfg),
     });
@@ -845,22 +887,43 @@ async function handleCallback(env, cq) {
     return;
   }
 
+  if (data.startsWith("area:delask:")) {
+    const index = Number(data.split(":")[2]);
+    const area = cfg.market_areas?.[index];
+    if (!area) return;
+    const last = (cfg.market_areas || []).length <= 1;
+    await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message.message_id,
+      text:
+        `🗑 Delete location <b>${escapeHtml(area.label)}</b> (${area.radius_km} km)?` +
+        (last
+          ? "\n\n⚠️ This is your <b>last</b> location — /scan will be blocked until you add another."
+          : ""),
+      parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "Yes, delete", callback_data: `area:del:${index}` },
+            { text: "❌ Cancel", callback_data: "set:areas" },
+          ],
+        ],
+      },
+    });
+    return;
+  }
+
   if (data.startsWith("area:del:")) {
     const index = Number(data.split(":")[2]);
-    if ((cfg.market_areas || []).length <= 1) {
-      await tg(env, "sendMessage", {
-        chat_id: chatId,
-        text: "⚠️ Keep at least one location.",
-      });
-      return;
-    }
-    const removed = cfg.market_areas.splice(index, 1)[0];
+    const removed = (cfg.market_areas || []).splice(index, 1)[0];
     syncAreas(cfg);
     await saveConfig(env, cfg);
     await tg(env, "editMessageText", {
       chat_id: chatId,
       message_id: cq.message.message_id,
-      text: `🗑 Removed ${escapeHtml(removed?.label || "location")}\n\n` + formatSettings(cfg),
+      text:
+        `🗑 Removed ${escapeHtml(removed?.label || "location")}\n\n` +
+        areasMenuText(cfg),
       parse_mode: "HTML",
       reply_markup: areasKeyboard(cfg),
     });
@@ -1008,9 +1071,12 @@ async function handleCallback(env, cq) {
     if (wizard.mode !== "custom" || !wizard.search) return;
     const areas = cfg.market_areas || [];
     if (!areas.length) {
-      await tg(env, "sendMessage", {
+      await tg(env, "editMessageText", {
         chat_id: chatId,
-        text: "No saved locations. Pick a city:",
+        message_id: cq.message.message_id,
+        text:
+          "⚠️ No saved locations yet.\n" +
+          "Pick a city for this custom search (or cancel and add locations in /settings):",
         reply_markup: cityPickerKeyboard(0, "customloc"),
       });
       wizard.step = "custom_pick";
@@ -1167,11 +1233,32 @@ async function handleWizardText(env, chatId, text) {
 }
 
 async function handleScan(env, chatId) {
+  const cfg = await getConfig(env);
+  const block = scanBlockReason(cfg);
+  if (block) {
+    await tg(env, "sendMessage", {
+      chat_id: chatId,
+      text: block + "\n\nOpen /settings to fix this.",
+      parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "📍 Add location", callback_data: "set:areas" },
+            { text: "🚗 Cars", callback_data: "set:cars" },
+          ],
+        ],
+      },
+    });
+    return;
+  }
+  const areaN = cfg.market_areas.length;
+  const carN = cfg.searches.length;
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
       "🔎 Scan with <b>saved settings</b>…\n" +
       CANADA_NOTE +
+      `\n🚗 ${carN} car(s) × 📍 ${areaN} location(s)` +
       "\n⏳ 3–15 min · only NEW cars (no duplicates).",
     parse_mode: "HTML",
   });
@@ -1200,7 +1287,8 @@ async function startCustomSearch(env, chatId) {
       "🔎 <b>Custom search</b>\n" +
       CANADA_NOTE +
       "\n\nOne-time run — <b>not</b> saved to /settings.\n" +
-      "Cancel anytime with the ❌ button or /cancel.",
+      "You will pick a location + radius at the end (required).\n" +
+      "Cancel anytime with ❌ or /cancel.",
     parse_mode: "HTML",
   });
   await promptCarName(env, chatId, w, { custom: true });

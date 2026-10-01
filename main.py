@@ -39,6 +39,23 @@ def run_once(
     *,
     notify: bool,
 ) -> int:
+    areas = cfg.get("market_areas") or []
+    if not cfg.get("searches"):
+        logger.error("No car searches configured — aborting")
+        if notify and telegram is not None:
+            telegram.send_text(
+                "⚠️ Scan skipped — no cars in settings. Use /settings to add a car."
+            )
+        return 0
+    if not areas and not cfg.get("locations"):
+        logger.error("No locations configured — aborting")
+        if notify and telegram is not None:
+            telegram.send_text(
+                "⚠️ Scan skipped — no locations in settings. "
+                "Use /settings → Locations to add a city + km radius."
+            )
+        return 0
+
     listings = scraper.run_cycle(
         searches=cfg["searches"],
         locations=cfg["locations"],
@@ -48,7 +65,7 @@ def run_once(
         delay_between_searches_sec=cfg["scraper"]["delay_between_searches_sec"],
         url_modes=cfg["scraper"].get("url_modes"),
         search_mode_locations=cfg["scraper"].get("search_mode_locations"),
-        market_areas=cfg.get("market_areas"),
+        market_areas=areas,
     )
 
     # Custom one-off searches re-send matches even if already in seen.db

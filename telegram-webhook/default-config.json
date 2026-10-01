@@ -2,21 +2,9 @@
   "country": "CA",
   "max_mileage_km": 250000,
   "market_areas": [
-    { "slug": "toronto", "label": "Toronto, ON", "radius_km": 65 },
-    { "slug": "richmond-hill", "label": "Richmond Hill, ON", "radius_km": 65 },
-    { "slug": "brampton", "label": "Brampton, ON", "radius_km": 65 },
-    { "slug": "north-york", "label": "North York, ON", "radius_km": 65 },
-    { "slug": "vaughan", "label": "Vaughan, ON", "radius_km": 65 },
-    { "slug": "markham", "label": "Markham, ON", "radius_km": 65 },
-    { "slug": "east-york", "label": "East York, ON", "radius_km": 65 },
-    { "slug": "mississauga", "label": "Mississauga, ON", "radius_km": 65 },
-    { "slug": "scarborough", "label": "Scarborough, ON", "radius_km": 65 },
-    { "slug": "hamilton", "label": "Hamilton, ON", "radius_km": 65 }
+    { "slug": "toronto", "label": "Toronto, ON", "radius_km": 65 }
   ],
-  "locations": [
-    "toronto", "richmond-hill", "brampton", "north-york", "vaughan",
-    "markham", "east-york", "mississauga", "scarborough", "hamilton"
-  ],
+  "locations": ["toronto"],
   "location_keywords": [],
   "searches": [
     {
@@ -58,6 +46,6 @@
     "delay_between_searches_sec": 2,
     "timeout_ms": 60000,
     "url_modes": ["vehicles", "search"],
-    "search_mode_locations": ["toronto", "hamilton"]
+    "search_mode_locations": ["toronto"]
   }
 }

@@ -21,17 +21,17 @@ def normalize(data: dict) -> dict:
 
     market_areas = list(data.get("market_areas") or [])
     if not market_areas and data.get("locations"):
-        # Migrate old city-slug list → areas with default 65 km radius
-        for slug in data["locations"]:
-            market_areas.append(
-                {
-                    "slug": slug,
-                    "label": str(slug).replace("-", " ").title() + ", ON",
-                    "radius_km": 65,
-                }
-            )
+        # Migrate old list → only first city (user adds more in Telegram)
+        slug = data["locations"][0]
+        market_areas.append(
+            {
+                "slug": slug,
+                "label": str(slug).replace("-", " ").title() + ", ON",
+                "radius_km": 65,
+            }
+        )
 
-    locations = [a["slug"] for a in market_areas] or list(data.get("locations") or [])
+    locations = [a["slug"] for a in market_areas]
 
     return {
         "country": data.get("country") or "CA",
