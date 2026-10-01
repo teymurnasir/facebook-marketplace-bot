@@ -4,9 +4,7 @@
 name: Marketplace scan
 
 on:
-  schedule:
-    # Backup timer (GitHub schedules are often delayed). Primary timer is Cloudflare cron.
-    - cron: "0,30 * * * *"
+  # Auto timing is Cloudflare cron + Telegram poll_interval_minutes (GitHub cron is unreliable).
   workflow_dispatch:
     inputs:
       job_id:

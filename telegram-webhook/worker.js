@@ -99,10 +99,17 @@ function escapeHtml(s) {
     .replaceAll(">", "&gt;");
 }
 
+const INTERVAL_OPTS = [15, 30, 45, 60, 90, 120]; // minutes (0 = auto off)
+
 function normalizeConfig(cfg) {
   const out = structuredClone(cfg || defaultConfig);
   out.country = "CA";
   out.max_mileage_km = out.max_mileage_km || 250000;
+  let interval = Number(out.poll_interval_minutes);
+  if (!Number.isFinite(interval)) interval = 30;
+  if (interval < 0) interval = 0;
+  if (interval > 0 && interval < 15) interval = 15; // minimum auto interval
+  out.poll_interval_minutes = Math.round(interval);
   if (!Array.isArray(out.market_areas)) out.market_areas = [];
   // Migrate legacy locations list → at most ONE area (user adds more themselves)
   if (!out.market_areas.length && Array.isArray(out.locations) && out.locations.length) {
@@ -182,10 +189,17 @@ function scanBlockReason(cfg) {
   return null;
 }
 
+function formatInterval(minutes) {
+  if (!minutes) return "Off (manual /scan only)";
+  return `Every ${minutes} min`;
+}
+
 function formatSettings(cfg) {
   const lines = [
     "⚙️ <b>Shared settings</b> (whole group)",
     CANADA_NOTE,
+    "",
+    `<b>Auto scan:</b> ${formatInterval(cfg.poll_interval_minutes)}`,
     "",
     "<b>Locations</b> (add only what you need — each one is searched)",
   ];
@@ -221,10 +235,33 @@ function mainKeyboard() {
         { text: "👀 View", callback_data: "set:view" },
         { text: "🚗 Cars", callback_data: "set:cars" },
       ],
-      [{ text: "📍 Locations", callback_data: "set:areas" }],
+      [
+        { text: "📍 Locations", callback_data: "set:areas" },
+        { text: "⏰ Auto interval", callback_data: "set:interval" },
+      ],
       [{ text: "❌ Close", callback_data: "set:close" }],
     ],
   };
+}
+
+function intervalKeyboard(current) {
+  const rows = [];
+  for (let i = 0; i < INTERVAL_OPTS.length; i += 3) {
+    rows.push(
+      INTERVAL_OPTS.slice(i, i + 3).map((m) => ({
+        text: m === current ? `✅ ${m} min` : `${m} min`,
+        callback_data: `interval:${m}`,
+      }))
+    );
+  }
+  rows.push([
+    {
+      text: current === 0 ? "✅ Auto off" : "⏸ Auto off",
+      callback_data: "interval:0",
+    },
+  ]);
+  rows.push([{ text: "⬅️ Menu", callback_data: "set:menu" }]);
+  return { inline_keyboard: rows };
 }
 
 function carsKeyboard(cfg) {
@@ -765,6 +802,40 @@ async function handleCallback(env, cq) {
     return;
   }
 
+  if (data === "set:interval") {
+    await setWizard(env, chatId, null);
+    await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message.message_id,
+      text:
+        "⏰ <b>Auto scan interval</b>\n" +
+        CANADA_NOTE +
+        `\n\nCurrent: <b>${formatInterval(cfg.poll_interval_minutes)}</b>\n` +
+        "This controls how often the cloud timer runs using your Telegram settings.\n" +
+        "/scan always works immediately (ignores this timer).",
+      parse_mode: "HTML",
+      reply_markup: intervalKeyboard(cfg.poll_interval_minutes),
+    });
+    return;
+  }
+
+  if (data.startsWith("interval:")) {
+    const minutes = Number(data.split(":")[1]);
+    if (!Number.isFinite(minutes) || minutes < 0) return;
+    cfg.poll_interval_minutes = minutes === 0 ? 0 : Math.max(15, Math.round(minutes));
+    await saveConfig(env, cfg);
+    await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message.message_id,
+      text:
+        `✅ Auto scan set to <b>${formatInterval(cfg.poll_interval_minutes)}</b>\n\n` +
+        formatSettings(cfg),
+      parse_mode: "HTML",
+      reply_markup: mainKeyboard(),
+    });
+    return;
+  }
+
   if (data === "wiz:cancel") {
     await cancelWizard(env, chatId, { editMessageId: cq.message.message_id });
     return;
@@ -1295,8 +1366,20 @@ async function startCustomSearch(env, chatId) {
 }
 
 async function scheduledScan(env) {
-  // Same source of truth as /scan: live Telegram KV settings loaded by Actions
+  // Tick every 5 min; only dispatch when Telegram poll_interval_minutes elapsed
   const cfg = await getConfig(env);
+  const intervalMin = Number(cfg.poll_interval_minutes);
+  if (!intervalMin || intervalMin <= 0) {
+    return; // auto off — silent
+  }
+
+  const lastRaw = await env.SETTINGS.get("last_auto_scan_at");
+  const lastAt = lastRaw ? Number(lastRaw) : 0;
+  const dueAt = lastAt + intervalMin * 60 * 1000;
+  if (lastAt && Date.now() < dueAt) {
+    return; // not due yet — silent
+  }
+
   const block = scanBlockReason(cfg);
   const chatIds = String(env.TELEGRAM_CHAT_IDS || "")
     .split(",")
@@ -1308,22 +1391,24 @@ async function scheduledScan(env) {
     }
   };
   if (block) {
-    await notify(block + "\n\n(from 30‑min timer)");
+    await notify(block + "\n\n(from auto timer)");
     return;
   }
   try {
     await dispatchScan(env);
+    await env.SETTINGS.put("last_auto_scan_at", String(Date.now()));
     await notify(
-      "⏰ <b>30‑min timer</b> started a scan with your Telegram settings.\n" +
+      `⏰ <b>Auto scan</b> started (${formatInterval(intervalMin)}).\n` +
+        "Using your Telegram /settings.\n" +
         `🚗 ${(cfg.searches || []).length} car(s) · 📍 ${(cfg.market_areas || []).length} location(s)`
     );
   } catch (err) {
-    await notify(`❌ 30‑min timer failed to start scan:\n${String(err.message || err)}`);
+    await notify(`❌ Auto timer failed to start scan:\n${String(err.message || err)}`);
   }
 }
 
 export default {
-  // Cloudflare Cron Trigger — reliable every-30-min schedule
+  // Cloudflare Cron Trigger — checks every 5 min; interval set in Telegram
   async scheduled(event, env, ctx) {
     ctx.waitUntil(scheduledScan(env));
   },

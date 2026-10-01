@@ -1,5 +1,6 @@
 {
   "country": "CA",
+  "poll_interval_minutes": 30,
   "max_mileage_km": 250000,
   "market_areas": [
     { "slug": "toronto", "label": "Toronto, ON", "radius_km": 65 }
