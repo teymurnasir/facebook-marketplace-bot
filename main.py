@@ -46,6 +46,8 @@ def run_once(
         sort_by=cfg["scraper"]["sort_by"],
         max_scrolls=cfg["scraper"]["max_scrolls"],
         delay_between_searches_sec=cfg["scraper"]["delay_between_searches_sec"],
+        url_modes=cfg["scraper"].get("url_modes"),
+        search_mode_locations=cfg["scraper"].get("search_mode_locations"),
     )
 
     new_count = 0

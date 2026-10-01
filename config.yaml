@@ -1,52 +1,87 @@
-# Canadian Facebook Marketplace car alerts
-#
-# `locations` = Marketplace city slugs we actually open (keep this short;
-#  Facebook often already shows nearby GTA cities from these hubs).
-# `location_keywords` = post-filter on the listing's city text.
+# Canadian Facebook Marketplace car alerts — high-coverage settings
 
-# Max odometer (km). Listings above this are skipped when mileage is known.
+# Max odometer (km). Known mileage above this is skipped.
+# Unknown mileage is KEPT so we don't miss cars that omit km on the card.
 max_mileage_km: 250000
 
-# Hub cities to open. Toronto (~40km) already returns most GTA listings;
-# Hamilton covers the further west end. Keywords below still filter cities.
+# Marketplace city hubs to open (wider GTA coverage).
+# Nearby cities still match via location_keywords even if not listed here.
 locations:
   - toronto
+  - mississauga
+  - brampton
+  - markham
+  - vaughan
   - hamilton
 
-# Optional: after scrape, keep only listings whose location text
-# matches one of these (case-insensitive substring). Leave empty to keep all.
+# Keep listings in these areas (substring match on city text).
+# Empty location on a card is always kept.
 location_keywords:
   - Toronto
-  - Richmond Hill
-  - Brampton
   - North York
-  - Vaughan
-  - Markham
-  - East York
-  - Mississauga
   - Scarborough
+  - Etobicoke
+  - East York
+  - York
+  - Downtown
+  - Richmond Hill
+  - Thornhill
+  - Markham
+  - Unionville
+  - Vaughan
+  - Concord
+  - Woodbridge
+  - Maple
+  - Brampton
+  - Mississauga
   - Hamilton
+  - Stoney Creek
+  - Dundas
+  - Ancaster
+  - Burlington
+  - Oakville
+  - Milton
+  - Ajax
+  - Pickering
+  - Whitby
+  - Oshawa
+  - Newmarket
+  - Aurora
+  - King City
+  - Caledon
+  - Georgetown
+  - GTA
 
 searches:
   - name: Mazda 3
+    # Multiple FB queries so odd titles still surface
+    queries:
+      - "mazda 3"
+      - "mazda3"
+      - "mazdaspeed3"
     query: "mazda 3"
     min_year: 2010
     max_year: 2014
     min_price: 300
     max_price: 2300
-    # Title/body must match at least one of these (case-insensitive)
     must_include_any:
       - mazda 3
       - mazda3
-    # Prefer body styles; listing is kept if any match OR if none of these words appear
-    # (so "mazda 3 gs" still passes). Set require_body_style: true to enforce.
+      - mazdaspeed
+      - speed3
     body_styles:
       - sedan
       - hatchback
       - hatch
     require_body_style: false
+    require_mileage: false
 
   - name: Kia Optima Hybrid
+    queries:
+      - "kia optima hybrid"
+      - "optima hybrid"
+      - "kia optima"
+      - "optima hev"
     query: "kia optima hybrid"
     min_year: 2011
     max_year: 2017
@@ -55,19 +90,30 @@ searches:
     must_include_any:
       - optima
       - k5
-    must_include_all:
+    # At least one hybrid-related token (title/card text)
+    powertrain_any:
       - hybrid
+      - hev
+      - phev
+      - plug-in
+      - plugin
+      - plug in
     body_styles:
       - sedan
     require_body_style: false
+    require_mileage: false
 
-# Scraper behaviour
 scraper:
-  # Newest listings first
   sort_by: creation_time_descend
-  # Max scroll rounds per search URL (more = more listings, slower)
-  max_scrolls: 3
-  # Pause between location searches (seconds) to reduce blocks
-  delay_between_searches_sec: 4
-  # Reuse one browser for the whole cycle
-  timeout_ms: 45000
+  # Deeper scroll = more cards per search (slower, fewer misses)
+  max_scrolls: 6
+  delay_between_searches_sec: 2
+  timeout_ms: 60000
+  # Vehicles for car filters; also run generic /search on core hubs
+  url_modes:
+    - vehicles
+    - search
+  # Generic Marketplace /search only on these hubs (avoids doubling every city)
+  search_mode_locations:
+    - toronto
+    - hamilton

@@ -22,9 +22,16 @@ MILEAGE_RE = re.compile(
 )
 
 
-def build_search_url(location_slug: str, search: SearchConfig, sort_by: str) -> str:
+def build_search_url(
+    location_slug: str,
+    search: SearchConfig,
+    sort_by: str,
+    *,
+    query: str | None = None,
+    mode: str = "search",
+) -> str:
     params = {
-        "query": search.query,
+        "query": query or search.query,
         "minPrice": search.min_price,
         "maxPrice": search.max_price,
         "minYear": search.min_year,
@@ -35,9 +42,35 @@ def build_search_url(location_slug: str, search: SearchConfig, sort_by: str) -> 
     if search.max_mileage_km is not None:
         # Marketplace vehicle mileage filter (when supported by the UI)
         params["maxMileage"] = search.max_mileage_km
-    # Vehicles category + query filters year/price better than generic search
-    base = f"https://www.facebook.com/marketplace/{location_slug}/search"
+    if mode == "vehicles":
+        base = f"https://www.facebook.com/marketplace/{location_slug}/vehicles"
+    else:
+        base = f"https://www.facebook.com/marketplace/{location_slug}/search"
     return f"{base}?{urlencode(params)}"
+
+
+def _normalize_alnum(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def _text_matches_any(hay: str, needles: list[str]) -> bool:
+    if not needles:
+        return True
+    low = hay.lower()
+    compact = _normalize_alnum(hay)
+    for needle in needles:
+        n = (needle or "").strip().lower()
+        if not n:
+            continue
+        if n in low or _normalize_alnum(n) in compact:
+            return True
+    return False
+
+
+def _text_matches_all(hay: str, needles: list[str]) -> bool:
+    if not needles:
+        return True
+    return all(_text_matches_any(hay, [n]) for n in needles)
 
 
 def _walk(obj: Any):
@@ -144,6 +177,14 @@ def _extract_listings_from_graphql(payload: Any, search_name: str) -> list[Listi
             location = candidate["location_text"].get("text") or ""
 
         mileage_km = _extract_mileage_from_candidate(candidate)
+        card_bits: list[str] = [title.strip()]
+        subs = candidate.get("custom_sub_titles_with_rendering_flags") or []
+        if isinstance(subs, list):
+            for sub in subs:
+                if isinstance(sub, dict) and sub.get("subtitle"):
+                    card_bits.append(str(sub["subtitle"]))
+                elif isinstance(sub, str):
+                    card_bits.append(sub)
 
         url = f"https://www.facebook.com/marketplace/item/{listing_id}"
         year = None
@@ -164,6 +205,7 @@ def _extract_listings_from_graphql(payload: Any, search_name: str) -> list[Listi
             search_name=search_name,
             year=year,
             mileage_km=mileage_km,
+            card_text=" ".join(card_bits),
             raw={"story": story},
         )
 
@@ -295,6 +337,7 @@ def _extract_listings_from_dom(page: Page, search_name: str) -> list[Listing]:
             price = price_lines[0] if price_lines else "Price n/a"
 
             mileage_km = _parse_mileage_km(text)
+            card_text = " ".join(lines)
             non_price = [
                 ln
                 for ln in lines
@@ -335,6 +378,7 @@ def _extract_listings_from_dom(page: Page, search_name: str) -> list[Listing]:
                 search_name=search_name,
                 year=year,
                 mileage_km=mileage_km,
+                card_text=card_text,
             )
         except Exception as exc:
             logger.debug("DOM card parse skipped: %s", exc)
@@ -347,18 +391,19 @@ def matches_filters(
     search: SearchConfig,
     location_keywords: list[str],
 ) -> bool:
-    hay = f"{listing.title} {listing.location}".lower()
+    hay = listing.haystack()
 
-    if search.must_include_any:
-        if not any(k.lower() in hay for k in search.must_include_any):
-            return False
+    if search.must_include_any and not _text_matches_any(hay, search.must_include_any):
+        return False
 
-    if search.must_include_all:
-        if not all(k.lower() in hay for k in search.must_include_all):
-            return False
+    if search.must_include_all and not _text_matches_all(hay, search.must_include_all):
+        return False
+
+    if search.powertrain_any and not _text_matches_any(hay, search.powertrain_any):
+        return False
 
     if search.require_body_style and search.body_styles:
-        if not any(b.lower() in hay for b in search.body_styles):
+        if not _text_matches_any(hay, search.body_styles):
             return False
 
     if listing.year is not None:
@@ -377,10 +422,11 @@ def matches_filters(
             return False
 
     if location_keywords:
-        loc = listing.location.lower()
-        # Empty location: keep (FB sometimes omits it on cards)
-        if loc and not any(k.lower() in loc for k in location_keywords):
-            return False
+        loc = (listing.location or "").strip().lower()
+        # Empty / generic location: keep (FB often omits city on cards)
+        if loc and loc not in {"ontario", "on", "canada"}:
+            if not any(k.lower() in loc for k in location_keywords):
+                return False
 
     return True
 
@@ -402,41 +448,85 @@ class MarketplaceScraper:
         locations: list[str],
         location_keywords: list[str],
         sort_by: str = "creation_time_descend",
-        max_scrolls: int = 3,
-        delay_between_searches_sec: float = 4,
+        max_scrolls: int = 7,
+        delay_between_searches_sec: float = 2.5,
+        url_modes: list[str] | None = None,
+        search_mode_locations: list[str] | None = None,
     ) -> list[Listing]:
         results: dict[str, Listing] = {}
+        modes = url_modes or ["vehicles", "search"]
+        search_hubs = set(search_mode_locations or [])
 
         with sync_playwright() as p:
             browser, page = self._launch(p)
             try:
                 for search in searches:
-                    for location in locations:
-                        url = build_search_url(location, search, sort_by)
-                        logger.info("Scanning [%s] @ %s", search.name, location)
-                        try:
-                            batch = self._scrape_url(page, url, search, max_scrolls)
-                        except Exception:
-                            logger.exception("Scrape failed for %s / %s", search.name, location)
-                            batch = []
+                    for query in search.all_queries():
+                        for location in locations:
+                            for mode in modes:
+                                if (
+                                    mode == "search"
+                                    and search_hubs
+                                    and location not in search_hubs
+                                ):
+                                    continue
+                                url = build_search_url(
+                                    location,
+                                    search,
+                                    sort_by,
+                                    query=query,
+                                    mode=mode,
+                                )
+                                logger.info(
+                                    "Scanning [%s] q=%r @ %s (%s)",
+                                    search.name,
+                                    query,
+                                    location,
+                                    mode,
+                                )
+                                try:
+                                    batch = self._scrape_url(page, url, search, max_scrolls)
+                                except Exception:
+                                    logger.exception(
+                                        "Scrape failed for %s / %s / %s",
+                                        search.name,
+                                        location,
+                                        mode,
+                                    )
+                                    batch = []
 
-                        kept = 0
-                        for listing in batch:
-                            if not matches_filters(listing, search, location_keywords):
-                                continue
-                            kept += 1
-                            # Prefer first-seen metadata; skip dupes across cities
-                            results.setdefault(listing.listing_id, listing)
-                        logger.info(
-                            "[%s] @ %s → %d raw, %d after filters (total unique %d)",
-                            search.name,
-                            location,
-                            len(batch),
-                            kept,
-                            len(results),
-                        )
+                                kept = 0
+                                for listing in batch:
+                                    if not matches_filters(
+                                        listing, search, location_keywords
+                                    ):
+                                        continue
+                                    kept += 1
+                                    prev = results.get(listing.listing_id)
+                                    if prev is None:
+                                        results[listing.listing_id] = listing
+                                    else:
+                                        # Merge richer fields from later hits
+                                        if listing.mileage_km and not prev.mileage_km:
+                                            prev.mileage_km = listing.mileage_km
+                                        if listing.card_text and len(listing.card_text) > len(
+                                            prev.card_text or ""
+                                        ):
+                                            prev.card_text = listing.card_text
+                                        if listing.location and not prev.location:
+                                            prev.location = listing.location
+                                logger.info(
+                                    "[%s] q=%r @ %s/%s → %d raw, %d kept (unique %d)",
+                                    search.name,
+                                    query,
+                                    location,
+                                    mode,
+                                    len(batch),
+                                    kept,
+                                    len(results),
+                                )
 
-                        time.sleep(delay_between_searches_sec)
+                                time.sleep(delay_between_searches_sec)
             finally:
                 browser.close()
 
@@ -548,15 +638,16 @@ class MarketplaceScraper:
                 existing.location = listing.location
             if listing.mileage_km is not None and existing.mileage_km is None:
                 existing.mileage_km = listing.mileage_km
+            if listing.card_text and len(listing.card_text) > len(existing.card_text or ""):
+                existing.card_text = listing.card_text
 
         for listing in merged.values():
             listing.search_name = search.name
             if listing.price_amount is None and listing.price:
                 listing.price_amount = _parse_price_amount(listing.price)
+            blob = f"{listing.title} {listing.location} {listing.card_text}"
             if listing.mileage_km is None:
-                listing.mileage_km = _parse_mileage_km(
-                    f"{listing.title} {listing.location}"
-                )
+                listing.mileage_km = _parse_mileage_km(blob)
 
         logger.info(
             "Found %d raw listings at %s (dom=%d graphql=%d)",
