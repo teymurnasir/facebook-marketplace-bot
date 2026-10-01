@@ -4,17 +4,20 @@
 # Unknown mileage is KEPT so we don't miss cars that omit km on the card.
 max_mileage_km: 250000
 
-# Marketplace city hubs to open (wider GTA coverage).
-# Nearby cities still match via location_keywords even if not listed here.
+# Marketplace city hubs we OPEN for search (your exact regions).
 locations:
   - toronto
-  - mississauga
+  - richmond-hill
   - brampton
-  - markham
+  - north-york
   - vaughan
+  - markham
+  - east-york
+  - mississauga
+  - scarborough
   - hamilton
 
-# ONLY keep listings from these cities (substring match on city text).
+# ONLY keep listings whose city text matches these (same 10 regions).
 # Empty location on a card is still kept (Facebook sometimes omits the city).
 location_keywords:
   - Toronto
