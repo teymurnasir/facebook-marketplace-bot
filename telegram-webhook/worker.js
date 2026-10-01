@@ -123,11 +123,240 @@ function mainKeyboard() {
 function carsKeyboard(cfg) {
   const rows = (cfg.searches || []).map((s, i) => [
     { text: `✏️ ${s.name}`, callback_data: `car:edit:${i}` },
-    { text: "🗑", callback_data: `car:del:${i}` },
+    { text: "🗑 Delete", callback_data: `car:delask:${i}` },
   ]);
   rows.push([{ text: "➕ Add new car search", callback_data: "car:add" }]);
-  rows.push([{ text: "⬅️ Back", callback_data: "set:menu" }]);
+  rows.push([{ text: "⬅️ Back to menu", callback_data: "set:menu" }]);
   return { inline_keyboard: rows };
+}
+
+/** Cancel (+ optional Keep / quick picks) under every wizard prompt */
+function wizardKeyboard({ keepLabel, keepData, extras } = {}) {
+  const rows = [];
+  if (extras?.length) rows.push(...extras);
+  if (keepLabel && keepData) {
+    rows.push([{ text: keepLabel, callback_data: keepData }]);
+  }
+  rows.push([
+    { text: "❌ Cancel", callback_data: "wiz:cancel" },
+    { text: "⬅️ Cars list", callback_data: "wiz:tocars" },
+  ]);
+  return { inline_keyboard: rows };
+}
+
+function hybridKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Yes — prefer hybrid", callback_data: "car:hybrid:yes" },
+        { text: "No", callback_data: "car:hybrid:no" },
+      ],
+      [
+        { text: "❌ Cancel", callback_data: "wiz:cancel" },
+        { text: "⬅️ Cars list", callback_data: "wiz:tocars" },
+      ],
+    ],
+  };
+}
+
+async function cancelWizard(env, chatId, { editMessageId } = {}) {
+  await setWizard(env, chatId, null);
+  const cfg = await getConfig(env);
+  const payload = {
+    chat_id: chatId,
+    text: "❌ Cancelled — nothing saved.\n\n" + formatSettings(cfg),
+    parse_mode: "HTML",
+    reply_markup: mainKeyboard(),
+  };
+  if (editMessageId) {
+    await tg(env, "editMessageText", { ...payload, message_id: editMessageId });
+  } else {
+    await tg(env, "sendMessage", payload);
+  }
+}
+
+async function promptCarName(env, chatId, wizard, { editing } = {}) {
+  const draft = wizard.draft || {};
+  const extras = editing
+    ? []
+    : [
+        [
+          { text: "Mazda 3", callback_data: "wiz:pick:Mazda 3" },
+          { text: "Kia Optima Hybrid", callback_data: "wiz:pick:Kia Optima Hybrid" },
+        ],
+      ];
+  await tg(env, "sendMessage", {
+    chat_id: chatId,
+    text: editing
+      ? `✏️ Editing <b>${escapeHtml(draft.name || "car")}</b>\n\n` +
+        "🚗 <b>Step 1/5 — Car name</b>\n" +
+        `Current: <code>${escapeHtml(draft.name || "")}</code>\n` +
+        "Type a new name, or tap Keep."
+      : "🚗 <b>Step 1/5 — Car name</b>\n" +
+        "What car should we search?\n\n" +
+        "Tap an example, or type your own:\n" +
+        "• <code>Mazda 3</code>\n" +
+        "• <code>Kia Optima Hybrid</code>\n" +
+        "• <code>Honda Civic</code>",
+    parse_mode: "HTML",
+    reply_markup: wizardKeyboard({
+      keepLabel: editing && draft.name ? `✅ Keep “${draft.name}”` : null,
+      keepData: editing && draft.name ? "wiz:keep" : null,
+      extras,
+    }),
+  });
+}
+
+async function promptCarQuery(env, chatId, wizard) {
+  const draft = wizard.draft || {};
+  const suggestion = draft.query || draft.name || "";
+  await tg(env, "sendMessage", {
+    chat_id: chatId,
+    text:
+      "🔎 <b>Step 2/5 — Facebook search text</b>\n" +
+      "What should we type into Marketplace?\n\n" +
+      "Examples: <code>mazda 3</code> · <code>kia optima hybrid</code>\n" +
+      (suggestion
+        ? `\nSuggested: <code>${escapeHtml(suggestion.toLowerCase())}</code>`
+        : ""),
+    parse_mode: "HTML",
+    reply_markup: wizardKeyboard({
+      keepLabel: suggestion ? `✅ Use “${suggestion.toLowerCase()}”` : null,
+      keepData: suggestion ? "wiz:keep" : null,
+    }),
+  });
+}
+
+async function promptCarYears(env, chatId, wizard) {
+  const draft = wizard.draft || {};
+  const has =
+    draft.min_year != null && draft.max_year != null
+      ? `${draft.min_year}-${draft.max_year}`
+      : "";
+  await tg(env, "sendMessage", {
+    chat_id: chatId,
+    text:
+      "📅 <b>Step 3/5 — Years</b>\n" +
+      "Type a range like <code>2010-2014</code>\n" +
+      "Example (Optima): <code>2011-2017</code>" +
+      (has ? `\n\nCurrent: <code>${has}</code>` : ""),
+    parse_mode: "HTML",
+    reply_markup: wizardKeyboard({
+      keepLabel: has ? `✅ Keep ${has}` : null,
+      keepData: has ? "wiz:keep" : null,
+      extras: [
+        [
+          { text: "2010–2014", callback_data: "wiz:years:2010-2014" },
+          { text: "2011–2017", callback_data: "wiz:years:2011-2017" },
+        ],
+        [
+          { text: "2012–2018", callback_data: "wiz:years:2012-2018" },
+          { text: "2015–2020", callback_data: "wiz:years:2015-2020" },
+        ],
+      ],
+    }),
+  });
+}
+
+async function promptCarPrice(env, chatId, wizard) {
+  const draft = wizard.draft || {};
+  const has =
+    draft.min_price != null && draft.max_price != null
+      ? `${draft.min_price}-${draft.max_price}`
+      : "";
+  await tg(env, "sendMessage", {
+    chat_id: chatId,
+    text:
+      "💰 <b>Step 4/5 — Price (CAD)</b>\n" +
+      "Type a range like <code>300-2300</code>\n" +
+      "Example: <code>1000-3000</code>" +
+      (has ? `\n\nCurrent: <code>$${has}</code>` : ""),
+    parse_mode: "HTML",
+    reply_markup: wizardKeyboard({
+      keepLabel: has ? `✅ Keep $${has}` : null,
+      keepData: has ? "wiz:keep" : null,
+      extras: [
+        [
+          { text: "$300–2300", callback_data: "wiz:price:300-2300" },
+          { text: "$1000–3000", callback_data: "wiz:price:1000-3000" },
+        ],
+        [
+          { text: "$500–5000", callback_data: "wiz:price:500-5000" },
+          { text: "$1000–8000", callback_data: "wiz:price:1000-8000" },
+        ],
+      ],
+    }),
+  });
+}
+
+async function promptCarHybrid(env, chatId) {
+  await tg(env, "sendMessage", {
+    chat_id: chatId,
+    text:
+      "🔋 <b>Step 5/5 — Hybrid preference</b>\n" +
+      "Optional note for the search name. Marketplace still searches your query text.\n" +
+      "Optima Hybrid → Yes · Mazda 3 → No",
+    parse_mode: "HTML",
+    reply_markup: hybridKeyboard(),
+  });
+}
+
+/** Advance wizard after a value for the current step is chosen */
+async function advanceCarWizard(env, chatId, wizard) {
+  const draft = wizard.draft || {};
+  if (wizard.step === "car_name") {
+    if (!draft.name) {
+      await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: "Please choose or type a car name.",
+        reply_markup: wizardKeyboard(),
+      });
+      return;
+    }
+    if (!draft.query) draft.query = draft.name.toLowerCase();
+    wizard.draft = draft;
+    wizard.step = "car_query";
+    await setWizard(env, chatId, wizard);
+    await promptCarQuery(env, chatId, wizard);
+    return;
+  }
+  if (wizard.step === "car_query") {
+    if (!draft.query) draft.query = draft.name;
+    wizard.draft = draft;
+    wizard.step = "car_years";
+    await setWizard(env, chatId, wizard);
+    await promptCarYears(env, chatId, wizard);
+    return;
+  }
+  if (wizard.step === "car_years") {
+    if (draft.min_year == null || draft.max_year == null) {
+      await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: "❌ Pick a year range or type <code>2010-2014</code>",
+        parse_mode: "HTML",
+        reply_markup: wizardKeyboard(),
+      });
+      return;
+    }
+    wizard.step = "car_price";
+    await setWizard(env, chatId, wizard);
+    await promptCarPrice(env, chatId, wizard);
+    return;
+  }
+  if (wizard.step === "car_price") {
+    if (draft.min_price == null || draft.max_price == null) {
+      await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: "❌ Pick a price range or type <code>300-2300</code>",
+        parse_mode: "HTML",
+        reply_markup: wizardKeyboard(),
+      });
+      return;
+    }
+    wizard.step = "car_hybrid";
+    await setWizard(env, chatId, wizard);
+    await promptCarHybrid(env, chatId);
+  }
 }
 
 function citiesKeyboard(selectedSlugs) {
@@ -168,7 +397,10 @@ function mileageKeyboard() {
         { text: "300,000", callback_data: "km:300000" },
       ],
       [{ text: "⌨️ Type custom km", callback_data: "km:custom" }],
-      [{ text: "⬅️ Back", callback_data: "set:menu" }],
+      [
+        { text: "❌ Cancel", callback_data: "set:menu" },
+        { text: "⬅️ Back", callback_data: "set:menu" },
+      ],
     ],
   };
 }
@@ -362,6 +594,7 @@ async function handleCallback(env, cq) {
         chat_id: chatId,
         text: "Type max mileage in km.\nExample: <code>250000</code>",
         parse_mode: "HTML",
+        reply_markup: wizardKeyboard(),
       });
       return;
     }
@@ -383,20 +616,65 @@ async function handleCallback(env, cq) {
     return;
   }
 
-  if (data === "car:add") {
-    await setWizard(env, chatId, { step: "car_name", draft: {}, index: -1 });
-    await tg(env, "sendMessage", {
+  if (data === "wiz:cancel") {
+    await cancelWizard(env, chatId, { editMessageId: cq.message.message_id });
+    return;
+  }
+
+  if (data === "wiz:tocars") {
+    await setWizard(env, chatId, null);
+    await tg(env, "editMessageText", {
       chat_id: chatId,
-      text:
-        "🚗 <b>Step 1/5 — Car</b>\n" +
-        "What car should we search?\n\n" +
-        "Examples:\n" +
-        "• <code>Mazda 3</code>\n" +
-        "• <code>Kia Optima Hybrid</code>\n" +
-        "• <code>Honda Civic</code>\n\n" +
-        "Type the car name now (or /cancel).",
-      parse_mode: "HTML",
+      message_id: cq.message.message_id,
+      text: "🚗 Choose a search to edit, or add a new one:",
+      reply_markup: carsKeyboard(cfg),
     });
+    return;
+  }
+
+  if (data === "wiz:keep") {
+    if (!wizard.step) return;
+    await advanceCarWizard(env, chatId, wizard);
+    return;
+  }
+
+  if (data.startsWith("wiz:pick:")) {
+    if (wizard.step !== "car_name") return;
+    const name = data.slice("wiz:pick:".length);
+    wizard.draft = wizard.draft || {};
+    wizard.draft.name = name;
+    wizard.draft.query = name.toLowerCase();
+    await setWizard(env, chatId, wizard);
+    await advanceCarWizard(env, chatId, wizard);
+    return;
+  }
+
+  if (data.startsWith("wiz:years:")) {
+    if (wizard.step !== "car_years") return;
+    const [a, b] = data.slice("wiz:years:".length).split("-").map(Number);
+    wizard.draft = wizard.draft || {};
+    wizard.draft.min_year = a;
+    wizard.draft.max_year = b;
+    await setWizard(env, chatId, wizard);
+    await advanceCarWizard(env, chatId, wizard);
+    return;
+  }
+
+  if (data.startsWith("wiz:price:")) {
+    if (wizard.step !== "car_price") return;
+    const [a, b] = data.slice("wiz:price:".length).split("-").map(Number);
+    wizard.draft = wizard.draft || {};
+    wizard.draft.min_price = a;
+    wizard.draft.max_price = b;
+    await setWizard(env, chatId, wizard);
+    await advanceCarWizard(env, chatId, wizard);
+    return;
+  }
+
+  if (data === "car:add") {
+    const w = { step: "car_name", draft: {}, index: -1 };
+    await setWizard(env, chatId, w);
+    await promptCarName(env, chatId, w, { editing: false });
     return;
   }
 
@@ -404,7 +682,7 @@ async function handleCallback(env, cq) {
     const index = Number(data.split(":")[2]);
     const s = cfg.searches[index];
     if (!s) return;
-    await setWizard(env, chatId, {
+    const w = {
       step: "car_name",
       index,
       draft: {
@@ -416,15 +694,36 @@ async function handleCallback(env, cq) {
         max_price: s.max_price,
         hybrid: !!(s.powertrain_any && s.powertrain_any.length),
       },
-    });
-    await tg(env, "sendMessage", {
+    };
+    await setWizard(env, chatId, w);
+    await promptCarName(env, chatId, w, { editing: true });
+    return;
+  }
+
+  if (data.startsWith("car:delask:")) {
+    const index = Number(data.split(":")[2]);
+    const s = cfg.searches[index];
+    if (!s) return;
+    if ((cfg.searches || []).length <= 1) {
+      await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: "⚠️ Keep at least one car search.",
+      });
+      return;
+    }
+    await tg(env, "editMessageText", {
       chat_id: chatId,
-      text:
-        `✏️ Editing <b>${escapeHtml(s.name)}</b>\n\n` +
-        "🚗 <b>Step 1/5 — Car</b>\n" +
-        `Current: <code>${escapeHtml(s.name)}</code>\n` +
-        "Send a new name, or send <code>.</code> to keep it.",
+      message_id: cq.message.message_id,
+      text: `🗑 Delete <b>${escapeHtml(s.name)}</b>?\nThis affects the whole group.`,
       parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "Yes, delete", callback_data: `car:del:${index}` },
+            { text: "❌ Cancel", callback_data: "set:cars" },
+          ],
+        ],
+      },
     });
     return;
   }
@@ -471,26 +770,25 @@ async function handleWizardText(env, chatId, text) {
   const wizard = await getWizard(env, chatId);
   if (!wizard?.step) return false;
   if (text.startsWith("/")) {
-    if (text.split(/\s+/)[0].split("@")[0].toLowerCase() === "/cancel") {
-      await setWizard(env, chatId, null);
-      await tg(env, "sendMessage", {
-        chat_id: chatId,
-        text: "Cancelled. /settings to open again.",
-      });
+    const cmd = text.split(/\s+/)[0].split("@")[0].toLowerCase();
+    if (cmd === "/cancel") {
+      await cancelWizard(env, chatId);
       return true;
     }
   }
 
   const cfg = await getConfig(env);
   const draft = wizard.draft || {};
+  const trimmed = text.trim();
 
   if (wizard.step === "mileage_custom") {
-    const km = Number(String(text).replace(/[,\s]/g, ""));
+    const km = Number(String(trimmed).replace(/[,\s]/g, ""));
     if (!Number.isFinite(km) || km < 1000) {
       await tg(env, "sendMessage", {
         chat_id: chatId,
         text: "❌ Invalid km. Example: <code>250000</code>",
         parse_mode: "HTML",
+        reply_markup: wizardKeyboard(),
       });
       return true;
     }
@@ -506,100 +804,80 @@ async function handleWizardText(env, chatId, text) {
   }
 
   if (wizard.step === "car_name") {
-    draft.name = text.trim() === "." ? draft.name : text.trim();
-    if (!draft.name) {
-      await tg(env, "sendMessage", { chat_id: chatId, text: "Please type a car name." });
-      return true;
-    }
+    draft.name = trimmed === "." ? draft.name : trimmed;
     wizard.draft = draft;
-    wizard.step = "car_query";
     await setWizard(env, chatId, wizard);
-    await tg(env, "sendMessage", {
-      chat_id: chatId,
-      text:
-        "🔎 <b>Step 2/5 — Search text</b>\n" +
-        "What should we type into Facebook Marketplace?\n\n" +
-        "Examples:\n" +
-        "• <code>mazda 3</code>\n" +
-        "• <code>kia optima hybrid</code>\n\n" +
-        `Send query now, or <code>.</code> to use <code>${escapeHtml(draft.name)}</code>`,
-      parse_mode: "HTML",
-    });
+    await advanceCarWizard(env, chatId, wizard);
     return true;
   }
 
   if (wizard.step === "car_query") {
-    draft.query = text.trim() === "." ? draft.name : text.trim();
+    draft.query = trimmed === "." ? draft.name : trimmed;
     wizard.draft = draft;
-    wizard.step = "car_years";
     await setWizard(env, chatId, wizard);
-    await tg(env, "sendMessage", {
-      chat_id: chatId,
-      text:
-        "📅 <b>Step 3/5 — Years</b>\n" +
-        "Send year range like: <code>2010-2014</code>\n" +
-        "Example for Optima: <code>2011-2017</code>",
-      parse_mode: "HTML",
-    });
+    await advanceCarWizard(env, chatId, wizard);
     return true;
   }
 
   if (wizard.step === "car_years") {
-    const m = text.trim().match(/^(\d{4})\s*[-–to]+\s*(\d{4})$/i);
+    const m = trimmed.match(/^(\d{4})\s*[-–to]+\s*(\d{4})$/i);
     if (!m) {
       await tg(env, "sendMessage", {
         chat_id: chatId,
-        text: "❌ Use format <code>2010-2014</code>",
+        text: "❌ Use format <code>2010-2014</code> or tap a button.",
         parse_mode: "HTML",
+        reply_markup: wizardKeyboard({
+          keepLabel:
+            draft.min_year != null
+              ? `✅ Keep ${draft.min_year}-${draft.max_year}`
+              : null,
+          keepData: draft.min_year != null ? "wiz:keep" : null,
+          extras: [
+            [
+              { text: "2010–2014", callback_data: "wiz:years:2010-2014" },
+              { text: "2011–2017", callback_data: "wiz:years:2011-2017" },
+            ],
+          ],
+        }),
       });
       return true;
     }
     draft.min_year = Number(m[1]);
     draft.max_year = Number(m[2]);
     wizard.draft = draft;
-    wizard.step = "car_price";
     await setWizard(env, chatId, wizard);
-    await tg(env, "sendMessage", {
-      chat_id: chatId,
-      text:
-        "💰 <b>Step 4/5 — Price (CAD)</b>\n" +
-        "Send price range like: <code>300-2300</code>\n" +
-        "Example: <code>1000-3000</code>",
-      parse_mode: "HTML",
-    });
+    await advanceCarWizard(env, chatId, wizard);
     return true;
   }
 
   if (wizard.step === "car_price") {
-    const m = text.trim().match(/^(\d+)\s*[-–to]+\s*(\d+)$/i);
+    const m = trimmed.match(/^(\d+)\s*[-–to]+\s*(\d+)$/i);
     if (!m) {
       await tg(env, "sendMessage", {
         chat_id: chatId,
-        text: "❌ Use format <code>300-2300</code>",
+        text: "❌ Use format <code>300-2300</code> or tap a button.",
         parse_mode: "HTML",
+        reply_markup: wizardKeyboard({
+          keepLabel:
+            draft.min_price != null
+              ? `✅ Keep $${draft.min_price}-${draft.max_price}`
+              : null,
+          keepData: draft.min_price != null ? "wiz:keep" : null,
+          extras: [
+            [
+              { text: "$300–2300", callback_data: "wiz:price:300-2300" },
+              { text: "$1000–3000", callback_data: "wiz:price:1000-3000" },
+            ],
+          ],
+        }),
       });
       return true;
     }
     draft.min_price = Number(m[1]);
     draft.max_price = Number(m[2]);
     wizard.draft = draft;
-    wizard.step = "car_hybrid";
     await setWizard(env, chatId, wizard);
-    await tg(env, "sendMessage", {
-      chat_id: chatId,
-      text:
-        "🔋 <b>Step 5/5 — Hybrid only?</b>\n" +
-        "For Optima Hybrid choose Yes. For normal Mazda 3 choose No.",
-      parse_mode: "HTML",
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "Yes — hybrid/HEV", callback_data: "car:hybrid:yes" },
-            { text: "No", callback_data: "car:hybrid:no" },
-          ],
-        ],
-      },
-    });
+    await advanceCarWizard(env, chatId, wizard);
     return true;
   }
 
