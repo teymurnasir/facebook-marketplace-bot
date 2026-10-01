@@ -69,14 +69,9 @@ searches:
     must_include_any:
       - optima
       - k5
-    # At least one hybrid-related token (title/card text)
-    powertrain_any:
-      - hybrid
-      - hev
-      - phev
-      - plug-in
-      - plugin
-      - plug in
+    # Prefer hybrid in title, but do NOT require it — many real hybrid ads
+    # only say "Kia Optima" while Facebook search already used "hybrid".
+    powertrain_any: []
     body_styles:
       - sedan
     require_body_style: false

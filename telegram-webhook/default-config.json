@@ -50,7 +50,7 @@
       "max_price": 3000,
       "must_include_any": ["optima", "k5"],
       "must_include_all": [],
-      "powertrain_any": ["hybrid", "hev", "phev", "plug-in", "plugin", "plug in"],
+      "powertrain_any": [],
       "body_styles": ["sedan"],
       "require_body_style": false,
       "require_mileage": false
