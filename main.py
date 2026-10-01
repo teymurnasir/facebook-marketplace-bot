@@ -69,6 +69,16 @@ def run_once(
         )
 
     logger.info("Cycle done: %d scraped, %d new", len(listings), new_count)
+    if notify and telegram is not None and env_bool("TELEGRAM_SCAN_SUMMARY", True):
+        if new_count:
+            telegram.send_text(
+                f"✅ Scan finished — <b>{new_count}</b> new listing(s) sent above."
+            )
+        else:
+            telegram.send_text(
+                f"✅ Scan finished — no new cars "
+                f"(checked {len(listings)} match(es))."
+            )
     return new_count
 
 

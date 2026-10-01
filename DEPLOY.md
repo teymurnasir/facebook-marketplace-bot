@@ -86,6 +86,18 @@ docker run -d --restart unless-stopped --name marketplace-bot \
 
 ---
 
+## Trigger a scan from Telegram
+
+Message your bot (only your chat id works):
+
+- `/scan` — start a Marketplace search now on GitHub Actions  
+- `/search` or `/run` — same as `/scan`  
+- `/help` — command list  
+
+A lightweight workflow checks Telegram about every **2 minutes**, then starts the full scan. You’ll get “starting…” quickly, then results when the scan finishes (a few minutes).
+
+Automatic scans every 30 minutes still run as well.
+
 ## Local laptop (still works)
 
 ```bash
