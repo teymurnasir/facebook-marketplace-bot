@@ -11,3 +11,4 @@ cookies.json
 .DS_Store
 playwright-report/
 storage_state.json
+telegram-webhook/.wrangler/
