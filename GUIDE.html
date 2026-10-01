@@ -188,6 +188,15 @@
           <td>Starts a Marketplace scan immediately. Group gets progress + results.</td>
         </tr>
         <tr>
+          <td><code>/settings</code> (or <code>/filters</code>)</td>
+          <td>
+            Shows <strong>shared</strong> filters for the whole group (not per person).
+            Buttons to view / edit cars, years, price, max km, and cities.
+            Cities use ✅/⬜ taps so names cannot be misspelled.
+            Add-car wizard asks: car (with examples) → search text → years → price → hybrid.
+          </td>
+        </tr>
+        <tr>
           <td><code>/help</code></td>
           <td>Short command list.</td>
         </tr>
@@ -195,12 +204,16 @@
           <td><code>/id</code></td>
           <td>Shows this chat’s Telegram id (needed if group id changes).</td>
         </tr>
+        <tr>
+          <td><code>/cancel</code></td>
+          <td>Abort an in-progress settings wizard.</td>
+        </tr>
       </tbody>
     </table>
-    <p>Anyone in the authorized group can use commands. History of old alerts is usually visible to new members (unless group history is hidden).</p>
+    <p>Anyone in the authorized group can use commands. Settings changes apply to every member and to the next scan. History of old alerts is usually visible to new members (unless group history is hidden).</p>
 
     <h2 id="search">4. Search parameters</h2>
-    <p>Edit <code>config.yaml</code>, then push to <code>main</code>.</p>
+    <p>Preferred: change filters in Telegram with <code>/settings</code> (stored in Cloudflare KV; scans load them automatically). Fallback: edit <code>config.yaml</code> and push to <code>main</code>.</p>
     <div class="grid two">
       <div class="card">
         <strong>Mazda 3</strong>

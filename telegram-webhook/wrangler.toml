@@ -2,8 +2,13 @@ name = "marketplace-telegram-webhook"
 main = "worker.js"
 compatibility_date = "2024-11-01"
 
-# Secrets (set via: npx wrangler secret put NAME):
+[[kv_namespaces]]
+binding = "SETTINGS"
+id = "5c38578fe2534736ae844cfb6bfc2453"
+
+# Secrets:
 #   TELEGRAM_BOT_TOKEN
 #   TELEGRAM_CHAT_IDS
 #   GITHUB_TOKEN
 #   GITHUB_REPO
+#   CONFIG_TOKEN

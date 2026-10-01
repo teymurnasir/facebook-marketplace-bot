@@ -30,6 +30,23 @@ jobs:
           pip install -r requirements.txt
           playwright install chromium --with-deps
 
+      - name: Load live Telegram settings
+        env:
+          SETTINGS_CONFIG_URL: ${{ secrets.SETTINGS_CONFIG_URL }}
+          SETTINGS_CONFIG_TOKEN: ${{ secrets.SETTINGS_CONFIG_TOKEN }}
+        run: |
+          if [ -n "$SETTINGS_CONFIG_URL" ] && [ -n "$SETTINGS_CONFIG_TOKEN" ]; then
+            curl -fsS \
+              -H "Authorization: Bearer ${SETTINGS_CONFIG_TOKEN}" \
+              "$SETTINGS_CONFIG_URL" \
+              -o /tmp/live-config.json
+            python scripts/json_config_to_yaml.py /tmp/live-config.json config.yaml
+            echo "---- live config.yaml (head) ----"
+            head -n 60 config.yaml
+          else
+            echo "No live settings secrets — using repo config.yaml"
+          fi
+
       - name: Restore Facebook session
         env:
           FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}

@@ -1,0 +1,67 @@
+{
+  "max_mileage_km": 250000,
+  "locations": [
+    "toronto",
+    "richmond-hill",
+    "brampton",
+    "north-york",
+    "vaughan",
+    "markham",
+    "east-york",
+    "mississauga",
+    "scarborough",
+    "hamilton"
+  ],
+  "location_keywords": [
+    "Toronto",
+    "Richmond Hill",
+    "Brampton",
+    "North York",
+    "Vaughan",
+    "Markham",
+    "East York",
+    "Mississauga",
+    "Scarborough",
+    "Hamilton"
+  ],
+  "searches": [
+    {
+      "name": "Mazda 3",
+      "queries": ["mazda 3", "mazda3", "mazdaspeed3"],
+      "query": "mazda 3",
+      "min_year": 2010,
+      "max_year": 2014,
+      "min_price": 300,
+      "max_price": 2300,
+      "must_include_any": ["mazda 3", "mazda3", "mazdaspeed", "speed3"],
+      "must_include_all": [],
+      "powertrain_any": [],
+      "body_styles": ["sedan", "hatchback", "hatch"],
+      "require_body_style": false,
+      "require_mileage": false
+    },
+    {
+      "name": "Kia Optima Hybrid",
+      "queries": ["kia optima hybrid", "optima hybrid", "kia optima", "optima hev"],
+      "query": "kia optima hybrid",
+      "min_year": 2011,
+      "max_year": 2017,
+      "min_price": 1000,
+      "max_price": 3000,
+      "must_include_any": ["optima", "k5"],
+      "must_include_all": [],
+      "powertrain_any": ["hybrid", "hev", "phev", "plug-in", "plugin", "plug in"],
+      "body_styles": ["sedan"],
+      "require_body_style": false,
+      "require_mileage": false
+    }
+  ],
+  "scraper": {
+    "sort_by": "creation_time_descend",
+    "max_scrolls": 6,
+    "delay_between_searches_sec": 2,
+    "timeout_ms": 60000,
+    "url_modes": ["vehicles", "search"],
+    "search_mode_locations": ["toronto", "hamilton"]
+  }
+}
