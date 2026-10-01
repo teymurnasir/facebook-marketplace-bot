@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 ITEM_ID_RE = re.compile(r"/marketplace/item/(\d+)")
 YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 PRICE_RE = re.compile(r"[\d,]+")
+MILEAGE_RE = re.compile(
+    r"([\d.,\s\u00a0]+)\s*(km|kilometers?|kilometres?|miles?|mi)\b",
+    re.IGNORECASE,
+)
 
 
 def build_search_url(location_slug: str, search: SearchConfig, sort_by: str) -> str:
@@ -28,6 +32,9 @@ def build_search_url(location_slug: str, search: SearchConfig, sort_by: str) -> 
         "exact": "false",
         "sortBy": sort_by,
     }
+    if search.max_mileage_km is not None:
+        # Marketplace vehicle mileage filter (when supported by the UI)
+        params["maxMileage"] = search.max_mileage_km
     # Vehicles category + query filters year/price better than generic search
     base = f"https://www.facebook.com/marketplace/{location_slug}/search"
     return f"{base}?{urlencode(params)}"
@@ -136,6 +143,8 @@ def _extract_listings_from_graphql(payload: Any, search_name: str) -> list[Listi
         if not location and isinstance(candidate.get("location_text"), dict):
             location = candidate["location_text"].get("text") or ""
 
+        mileage_km = _extract_mileage_from_candidate(candidate)
+
         url = f"https://www.facebook.com/marketplace/item/{listing_id}"
         year = None
         ym = YEAR_RE.search(title)
@@ -154,10 +163,84 @@ def _extract_listings_from_graphql(payload: Any, search_name: str) -> list[Listi
             url=url,
             search_name=search_name,
             year=year,
+            mileage_km=mileage_km,
             raw={"story": story},
         )
 
     return list(found.values())
+
+
+def _parse_mileage_km(text: str) -> int | None:
+    """Parse odometer text like '330.000 km', '250,000 km', '120000 miles'."""
+    if not text:
+        return None
+    m = MILEAGE_RE.search(text.replace("\xa0", " "))
+    if not m:
+        return None
+    amount = _parse_number(m.group(1))
+    if amount is None:
+        return None
+    unit = m.group(2).lower()
+    if unit.startswith("mi"):
+        return int(round(amount * 1.60934))
+    return amount
+
+
+def _extract_mileage_from_candidate(candidate: dict[str, Any]) -> int | None:
+    subs = candidate.get("custom_sub_titles_with_rendering_flags") or []
+    if isinstance(subs, list):
+        for sub in subs:
+            if isinstance(sub, dict):
+                km = _parse_mileage_km(str(sub.get("subtitle") or ""))
+                if km is not None:
+                    return km
+            elif isinstance(sub, str):
+                km = _parse_mileage_km(sub)
+                if km is not None:
+                    return km
+    for key in ("odometer_data", "vehicle_odometer_data", "mileage"):
+        val = candidate.get(key)
+        if isinstance(val, dict):
+            for nested_key in ("value", "amount", "odometer", "text"):
+                if val.get(nested_key) is not None:
+                    if isinstance(val[nested_key], (int, float)):
+                        return int(val[nested_key])
+                    km = _parse_mileage_km(str(val[nested_key]))
+                    if km is not None:
+                        return km
+        elif isinstance(val, (int, float)):
+            return int(val)
+        elif isinstance(val, str):
+            km = _parse_mileage_km(val)
+            if km is not None:
+                return km
+    return None
+
+
+def _parse_number(text: str) -> int | None:
+    """Parse locale-aware integers (2.000 / 2,000 / 2000)."""
+    if not text:
+        return None
+    cleaned = text.replace("\xa0", " ").replace(" ", "").strip()
+    if not cleaned:
+        return None
+    if "," in cleaned and "." in cleaned:
+        if cleaned.rfind(",") > cleaned.rfind("."):
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", "")
+    elif "," in cleaned:
+        parts = cleaned.split(",")
+        cleaned = "".join(parts) if len(parts[-1]) == 3 and len(parts) > 1 else cleaned.replace(",", ".")
+    elif "." in cleaned:
+        parts = cleaned.split(".")
+        if len(parts[-1]) == 3 and len(parts) > 1:
+            cleaned = "".join(parts)
+    try:
+        return int(round(float(cleaned)))
+    except ValueError:
+        digits = re.sub(r"[^\d]", "", cleaned)
+        return int(digits) if digits else None
 
 
 def _parse_price_amount(price_text: str) -> int | None:
@@ -176,27 +259,11 @@ def _parse_price_amount(price_text: str) -> int | None:
     )
     if not cleaned or cleaned in {"free", "pulsuz", "gratuit"}:
         return 0
+    return _parse_number(cleaned)
 
-    # Both separators: the last one is the decimal mark
-    if "," in cleaned and "." in cleaned:
-        if cleaned.rfind(",") > cleaned.rfind("."):
-            cleaned = cleaned.replace(".", "").replace(",", ".")
-        else:
-            cleaned = cleaned.replace(",", "")
-    elif "," in cleaned:
-        parts = cleaned.split(",")
-        cleaned = "".join(parts) if len(parts[-1]) == 3 and len(parts) > 1 else cleaned.replace(",", ".")
-    elif "." in cleaned:
-        parts = cleaned.split(".")
-        # "2.000" / "1.234" → thousands (common in AZ/EU locale UI)
-        if len(parts[-1]) == 3 and len(parts) > 1:
-            cleaned = "".join(parts)
 
-    try:
-        return int(round(float(cleaned)))
-    except ValueError:
-        digits = re.sub(r"[^\d]", "", cleaned)
-        return int(digits) if digits else None
+def _is_mileage_line(line: str) -> bool:
+    return _parse_mileage_km(line) is not None
 
 
 def _is_price_line(line: str) -> bool:
@@ -227,7 +294,14 @@ def _extract_listings_from_dom(page: Page, search_name: str) -> list[Listing]:
             price_lines = [ln for ln in lines if "$" in ln or "CA$" in ln or "zł" in ln.lower() or ln.lower() in {"free", "pulsuz"}]
             price = price_lines[0] if price_lines else "Price n/a"
 
-            non_price = [ln for ln in lines if ln not in price_lines and not YEAR_RE.fullmatch(ln)]
+            mileage_km = _parse_mileage_km(text)
+            non_price = [
+                ln
+                for ln in lines
+                if ln not in price_lines
+                and not YEAR_RE.fullmatch(ln)
+                and not _is_mileage_line(ln)
+            ]
             title = next((ln for ln in non_price if YEAR_RE.search(ln) or len(ln) > 3), None)
             if not title:
                 title = non_price[0] if non_price else f"Listing {listing_id}"
@@ -260,6 +334,7 @@ def _extract_listings_from_dom(page: Page, search_name: str) -> list[Listing]:
                 url=f"https://www.facebook.com/marketplace/item/{listing_id}",
                 search_name=search_name,
                 year=year,
+                mileage_km=mileage_km,
             )
         except Exception as exc:
             logger.debug("DOM card parse skipped: %s", exc)
@@ -292,6 +367,13 @@ def matches_filters(
 
     if listing.price_amount is not None:
         if listing.price_amount < search.min_price or listing.price_amount > search.max_price:
+            return False
+
+    if search.require_mileage and listing.mileage_km is None:
+        return False
+
+    if search.max_mileage_km is not None and listing.mileage_km is not None:
+        if listing.mileage_km > search.max_mileage_km:
             return False
 
     if location_keywords:
@@ -464,11 +546,17 @@ class MarketplaceScraper:
                 existing.year = listing.year or existing.year
             if listing.location and not existing.location:
                 existing.location = listing.location
+            if listing.mileage_km is not None and existing.mileage_km is None:
+                existing.mileage_km = listing.mileage_km
 
         for listing in merged.values():
             listing.search_name = search.name
             if listing.price_amount is None and listing.price:
                 listing.price_amount = _parse_price_amount(listing.price)
+            if listing.mileage_km is None:
+                listing.mileage_km = _parse_mileage_km(
+                    f"{listing.title} {listing.location}"
+                )
 
         logger.info(
             "Found %d raw listings at %s (dom=%d graphql=%d)",

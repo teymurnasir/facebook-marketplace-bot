@@ -12,10 +12,13 @@ class SearchConfig:
     max_year: int
     min_price: int
     max_price: int
+    max_mileage_km: int | None = 250_000
     must_include_any: list[str] = field(default_factory=list)
     must_include_all: list[str] = field(default_factory=list)
     body_styles: list[str] = field(default_factory=list)
     require_body_style: bool = False
+    # If True, drop listings with no mileage shown
+    require_mileage: bool = False
 
 
 @dataclass
@@ -28,6 +31,7 @@ class Listing:
     url: str
     search_name: str
     year: int | None = None
+    mileage_km: int | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     def telegram_message(self) -> str:
@@ -38,6 +42,8 @@ class Listing:
             f"<b>{_escape(self.title)}</b>",
             f"💰 {_escape(self.price)}",
         ]
+        if self.mileage_km is not None:
+            lines.append(f"⏱ {self.mileage_km:,} km")
         if self.location:
             lines.append(f"📍 {_escape(self.location)}")
         lines.append(f'🔗 <a href="{safe_url}">Open on Marketplace</a>')

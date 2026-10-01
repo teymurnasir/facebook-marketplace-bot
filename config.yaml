@@ -4,6 +4,9 @@
 #  Facebook often already shows nearby GTA cities from these hubs).
 # `location_keywords` = post-filter on the listing's city text.
 
+# Max odometer (km). Listings above this are skipped when mileage is known.
+max_mileage_km: 250000
+
 # Hub cities to open. Toronto (~40km) already returns most GTA listings;
 # Hamilton covers the further west end. Keywords below still filter cities.
 locations:
