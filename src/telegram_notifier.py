@@ -26,27 +26,57 @@ class TelegramNotifier:
     def close(self) -> None:
         self._client.close()
 
-    def send_text(self, text: str) -> bool:
-        ok_any = False
-        for chat_id in self.chat_ids:
-            try:
-                resp = self._client.post(
+    def _send_one(self, chat_id: str, text: str) -> bool:
+        try:
+            resp = self._client.post(
+                f"{self.base}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": False,
+                },
+            )
+            data = resp.json()
+            if data.get("ok"):
+                return True
+
+            # Group upgraded to supergroup → Telegram returns new chat id
+            params = data.get("parameters") or {}
+            migrated = params.get("migrate_to_chat_id")
+            if migrated is not None:
+                new_id = str(migrated)
+                logger.warning("Chat %s migrated to %s — retrying", chat_id, new_id)
+                if new_id not in self.chat_ids:
+                    self.chat_ids = [
+                        new_id if c == chat_id else c for c in self.chat_ids
+                    ]
+                retry = self._client.post(
                     f"{self.base}/sendMessage",
                     json={
-                        "chat_id": chat_id,
+                        "chat_id": new_id,
                         "text": text,
                         "parse_mode": "HTML",
                         "disable_web_page_preview": False,
                     },
                 )
-                resp.raise_for_status()
-                data = resp.json()
-                if not data.get("ok"):
-                    logger.error("Telegram API error (%s): %s", chat_id, data)
-                    continue
+                retry_data = retry.json()
+                if retry_data.get("ok"):
+                    return True
+                logger.error("Telegram API error after migrate (%s): %s", new_id, retry_data)
+                return False
+
+            logger.error("Telegram API error (%s): %s", chat_id, data)
+            return False
+        except Exception:
+            logger.exception("Failed to send Telegram message to %s", chat_id)
+            return False
+
+    def send_text(self, text: str) -> bool:
+        ok_any = False
+        for chat_id in list(self.chat_ids):
+            if self._send_one(chat_id, text):
                 ok_any = True
-            except Exception:
-                logger.exception("Failed to send Telegram message to %s", chat_id)
         return ok_any
 
     def send_listing(self, listing: Listing) -> bool:
