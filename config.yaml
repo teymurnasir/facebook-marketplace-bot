@@ -14,43 +14,19 @@ locations:
   - vaughan
   - hamilton
 
-# Keep listings in these areas (substring match on city text).
-# Empty location on a card is always kept.
+# ONLY keep listings from these cities (substring match on city text).
+# Empty location on a card is still kept (Facebook sometimes omits the city).
 location_keywords:
   - Toronto
-  - North York
-  - Scarborough
-  - Etobicoke
-  - East York
-  - York
-  - Downtown
   - Richmond Hill
-  - Thornhill
-  - Markham
-  - Unionville
-  - Vaughan
-  - Concord
-  - Woodbridge
-  - Maple
   - Brampton
+  - North York
+  - Vaughan
+  - Markham
+  - East York
   - Mississauga
+  - Scarborough
   - Hamilton
-  - Stoney Creek
-  - Dundas
-  - Ancaster
-  - Burlington
-  - Oakville
-  - Milton
-  - Ajax
-  - Pickering
-  - Whitby
-  - Oshawa
-  - Newmarket
-  - Aurora
-  - King City
-  - Caledon
-  - Georgetown
-  - GTA
 
 searches:
   - name: Mazda 3
