@@ -1,12 +1,13 @@
-# Listens for Telegram /scan and starts the Marketplace workflow.
-# Note: GitHub may delay cron jobs; */5 is more reliable than every minute.
+# Backup only: poll Telegram for /scan (slow, up to ~5 min).
+# Prefer the Cloudflare webhook in telegram-webhook/ for instant /scan.
+# Keep this disabled while a Telegram webhook is active (getUpdates conflict).
 
 name: Telegram /scan trigger
 
 on:
-  schedule:
-    # Check Telegram every 5 minutes for /scan
-    - cron: "*/5 * * * *"
+  # schedule disabled — use telegram-webhook Worker for instant /scan
+  # schedule:
+  #   - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
