@@ -1,10 +1,11 @@
 /**
- * Telegram webhook:
- *  - instant /scan → GitHub Actions
- *  - shared /settings wizard (group-wide filters in Cloudflare KV)
+ * Canada-only Marketplace Telegram webhook
+ *  - /scan — shared saved settings
+ *  - /settings — shared filters (cars, per-car km, locations + radius)
+ *  - /customsearch — one-off search (not saved)
  *
  * Secrets: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS, GITHUB_TOKEN, GITHUB_REPO, CONFIG_TOKEN
- * KV binding: SETTINGS
+ * KV: SETTINGS
  */
 
 import defaultConfig from "./default-config.json";
@@ -13,20 +14,63 @@ const SCAN = new Set(["/scan", "/search", "/run"]);
 const HELP = new Set(["/start", "/help"]);
 const ID = new Set(["/id", "/chatid"]);
 const SETTINGS = new Set(["/settings", "/filters", "/config"]);
+const CUSTOM = new Set(["/customsearch", "/custom", "/oneshot"]);
 
-/** Fixed city catalog — buttons avoid misspelling */
-const CITIES = [
-  { slug: "toronto", label: "Toronto" },
-  { slug: "richmond-hill", label: "Richmond Hill" },
-  { slug: "brampton", label: "Brampton" },
-  { slug: "north-york", label: "North York" },
-  { slug: "vaughan", label: "Vaughan" },
-  { slug: "markham", label: "Markham" },
-  { slug: "east-york", label: "East York" },
-  { slug: "mississauga", label: "Mississauga" },
-  { slug: "scarborough", label: "Scarborough" },
-  { slug: "hamilton", label: "Hamilton" },
+const CANADA_NOTE = "🇨🇦 <b>Canada only</b> — locations & prices are for Canadian Marketplace.";
+
+/** Curated Facebook Marketplace city slugs (Canada) — tap to avoid misspelling */
+const CANADA_CITIES = [
+  { slug: "toronto", label: "Toronto, ON" },
+  { slug: "richmond-hill", label: "Richmond Hill, ON" },
+  { slug: "brampton", label: "Brampton, ON" },
+  { slug: "north-york", label: "North York, ON" },
+  { slug: "vaughan", label: "Vaughan, ON" },
+  { slug: "markham", label: "Markham, ON" },
+  { slug: "east-york", label: "East York, ON" },
+  { slug: "mississauga", label: "Mississauga, ON" },
+  { slug: "scarborough", label: "Scarborough, ON" },
+  { slug: "hamilton", label: "Hamilton, ON" },
+  { slug: "oakville", label: "Oakville, ON" },
+  { slug: "burlington", label: "Burlington, ON" },
+  { slug: "ajax", label: "Ajax, ON" },
+  { slug: "pickering", label: "Pickering, ON" },
+  { slug: "oshawa", label: "Oshawa, ON" },
+  { slug: "barrie", label: "Barrie, ON" },
+  { slug: "kitchener", label: "Kitchener, ON" },
+  { slug: "waterloo", label: "Waterloo, ON" },
+  { slug: "london", label: "London, ON" },
+  { slug: "ottawa", label: "Ottawa, ON" },
+  { slug: "niagara-falls", label: "Niagara Falls, ON" },
+  { slug: "windsor", label: "Windsor, ON" },
+  { slug: "kingston", label: "Kingston, ON" },
+  { slug: "montreal", label: "Montreal, QC" },
+  { slug: "quebec-city", label: "Quebec City, QC" },
+  { slug: "laval", label: "Laval, QC" },
+  { slug: "gatineau", label: "Gatineau, QC" },
+  { slug: "vancouver", label: "Vancouver, BC" },
+  { slug: "burnaby", label: "Burnaby, BC" },
+  { slug: "surrey", label: "Surrey, BC" },
+  { slug: "victoria", label: "Victoria, BC" },
+  { slug: "calgary", label: "Calgary, AB" },
+  { slug: "edmonton", label: "Edmonton, AB" },
+  { slug: "winnipeg", label: "Winnipeg, MB" },
+  { slug: "saskatoon", label: "Saskatoon, SK" },
+  { slug: "regina", label: "Regina, SK" },
+  { slug: "halifax", label: "Halifax, NS" },
+  { slug: "st-johns", label: "St. John's, NL" },
 ];
+
+/** User-facing km → Facebook mile radius (FB URL uses miles) */
+const RADIUS_OPTS = [
+  { km: 16, label: "16 km" },
+  { km: 32, label: "32 km" },
+  { km: 65, label: "65 km" },
+  { km: 100, label: "100 km" },
+  { km: 160, label: "160 km" },
+  { km: 400, label: "400 km" },
+];
+
+const KM_OPTS = [100000, 150000, 200000, 250000, 300000, 400000];
 
 function authorized(chatId, env) {
   return String(env.TELEGRAM_CHAT_IDS || "")
@@ -48,17 +92,50 @@ async function tg(env, method, body) {
   return res.json();
 }
 
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function normalizeConfig(cfg) {
+  const out = structuredClone(cfg || defaultConfig);
+  out.country = "CA";
+  out.max_mileage_km = out.max_mileage_km || 250000;
+  if (!Array.isArray(out.market_areas) || !out.market_areas.length) {
+    const locs = out.locations || [];
+    out.market_areas = locs.map((slug) => {
+      const hit = CANADA_CITIES.find((c) => c.slug === slug);
+      return {
+        slug,
+        label: hit?.label || String(slug).replaceAll("-", " "),
+        radius_km: 65,
+      };
+    });
+  }
+  out.locations = out.market_areas.map((a) => a.slug);
+  out.location_keywords = out.location_keywords || [];
+  out.searches = (out.searches || []).map((s) => ({
+    ...s,
+    max_mileage_km: s.max_mileage_km ?? out.max_mileage_km ?? 250000,
+  }));
+  if (!out.scraper) out.scraper = structuredClone(defaultConfig.scraper);
+  return out;
+}
+
 async function getConfig(env) {
   const raw = await env.SETTINGS.get("config");
   if (!raw) {
-    await env.SETTINGS.put("config", JSON.stringify(defaultConfig));
-    return structuredClone(defaultConfig);
+    const seeded = normalizeConfig(defaultConfig);
+    await env.SETTINGS.put("config", JSON.stringify(seeded));
+    return seeded;
   }
-  return JSON.parse(raw);
+  return normalizeConfig(JSON.parse(raw));
 }
 
 async function saveConfig(env, cfg) {
-  await env.SETTINGS.put("config", JSON.stringify(cfg));
+  await env.SETTINGS.put("config", JSON.stringify(normalizeConfig(cfg)));
 }
 
 async function getWizard(env, chatId) {
@@ -76,44 +153,49 @@ async function setWizard(env, chatId, state) {
   });
 }
 
+function syncAreas(cfg) {
+  cfg.locations = (cfg.market_areas || []).map((a) => a.slug);
+  if (!cfg.locations.length) {
+    cfg.market_areas = [
+      { slug: "toronto", label: "Toronto, ON", radius_km: 65 },
+    ];
+    cfg.locations = ["toronto"];
+  }
+}
+
 function formatSettings(cfg) {
-  const lines = ["⚙️ <b>Current shared settings</b>", ""];
-  lines.push(`⏱ Max mileage: <b>${cfg.max_mileage_km?.toLocaleString() || "n/a"} km</b>`);
-  lines.push("");
-  lines.push("<b>Cities</b>");
-  lines.push((cfg.location_keywords || []).map((c) => `• ${c}`).join("\n") || "• (none)");
+  const lines = [
+    "⚙️ <b>Shared settings</b> (whole group)",
+    CANADA_NOTE,
+    "",
+    "<b>Locations + radius</b>",
+  ];
+  if (!(cfg.market_areas || []).length) lines.push("• (none — add one)");
+  for (const a of cfg.market_areas || []) {
+    lines.push(`• ${escapeHtml(a.label)} · <b>${a.radius_km} km</b>`);
+  }
   lines.push("");
   (cfg.searches || []).forEach((s, i) => {
     lines.push(`<b>${i + 1}. ${escapeHtml(s.name)}</b>`);
     lines.push(`   Query: <code>${escapeHtml(s.query)}</code>`);
     lines.push(`   Years: ${s.min_year}–${s.max_year}`);
     lines.push(`   Price: $${s.min_price}–$${s.max_price}`);
-    if (s.powertrain_any?.length) {
-      lines.push(`   Powertrain: ${s.powertrain_any.join(", ")}`);
-    }
+    lines.push(`   Max km: ${(s.max_mileage_km ?? 250000).toLocaleString()}`);
     lines.push("");
   });
-  lines.push("Use buttons below, or /settings anytime.");
+  lines.push("Buttons below · /customsearch for a one-off run");
   return lines.join("\n");
-}
-
-function escapeHtml(s) {
-  return String(s)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
 }
 
 function mainKeyboard() {
   return {
     inline_keyboard: [
       [
-        { text: "👀 View settings", callback_data: "set:view" },
-        { text: "🚗 Edit / add car", callback_data: "set:cars" },
+        { text: "👀 View", callback_data: "set:view" },
+        { text: "🚗 Cars", callback_data: "set:cars" },
       ],
       [
-        { text: "📍 Cities", callback_data: "set:cities" },
-        { text: "⏱ Max km", callback_data: "set:mileage" },
+        { text: "📍 Locations + km", callback_data: "set:areas" },
       ],
       [{ text: "❌ Close", callback_data: "set:close" }],
     ],
@@ -123,23 +205,79 @@ function mainKeyboard() {
 function carsKeyboard(cfg) {
   const rows = (cfg.searches || []).map((s, i) => [
     { text: `✏️ ${s.name}`, callback_data: `car:edit:${i}` },
-    { text: "🗑 Delete", callback_data: `car:delask:${i}` },
+    { text: "🗑", callback_data: `car:delask:${i}` },
   ]);
-  rows.push([{ text: "➕ Add new car search", callback_data: "car:add" }]);
-  rows.push([{ text: "⬅️ Back to menu", callback_data: "set:menu" }]);
+  rows.push([{ text: "➕ Add car", callback_data: "car:add" }]);
+  rows.push([{ text: "⬅️ Menu", callback_data: "set:menu" }]);
   return { inline_keyboard: rows };
 }
 
-/** Cancel (+ optional Keep / quick picks) under every wizard prompt */
-function wizardKeyboard({ keepLabel, keepData, extras } = {}) {
+function areasKeyboard(cfg) {
+  const rows = (cfg.market_areas || []).map((a, i) => [
+    {
+      text: `${a.label} · ${a.radius_km} km`,
+      callback_data: `area:edit:${i}`,
+    },
+    { text: "🗑", callback_data: `area:del:${i}` },
+  ]);
+  rows.push([{ text: "➕ Add location", callback_data: "area:add" }]);
+  rows.push([{ text: "⬅️ Menu", callback_data: "set:menu" }]);
+  return { inline_keyboard: rows };
+}
+
+function cityPickerKeyboard(page = 0, prefix = "locpick") {
+  const pageSize = 8;
+  const start = page * pageSize;
+  const slice = CANADA_CITIES.slice(start, start + pageSize);
   const rows = [];
-  if (extras?.length) rows.push(...extras);
-  if (keepLabel && keepData) {
-    rows.push([{ text: keepLabel, callback_data: keepData }]);
+  for (let i = 0; i < slice.length; i += 2) {
+    const row = [];
+    for (let j = i; j < i + 2 && j < slice.length; j++) {
+      const c = slice[j];
+      row.push({
+        text: c.label,
+        callback_data: `${prefix}:${c.slug}`,
+      });
+    }
+    rows.push(row);
+  }
+  const nav = [];
+  if (page > 0) nav.push({ text: "⬅️ Prev", callback_data: `${prefix}page:${page - 1}` });
+  if (start + pageSize < CANADA_CITIES.length) {
+    nav.push({ text: "Next ➡️", callback_data: `${prefix}page:${page + 1}` });
+  }
+  if (nav.length) rows.push(nav);
+  rows.push([
+    { text: "❌ Cancel", callback_data: "wiz:cancel" },
+    { text: "⬅️ Back", callback_data: "set:areas" },
+  ]);
+  return { inline_keyboard: rows };
+}
+
+function radiusKeyboard(prefix = "rad") {
+  const rows = [];
+  for (let i = 0; i < RADIUS_OPTS.length; i += 2) {
+    rows.push(
+      RADIUS_OPTS.slice(i, i + 2).map((r) => ({
+        text: r.label,
+        callback_data: `${prefix}:${r.km}`,
+      }))
+    );
   }
   rows.push([
     { text: "❌ Cancel", callback_data: "wiz:cancel" },
-    { text: "⬅️ Cars list", callback_data: "wiz:tocars" },
+    { text: "⬅️ Back", callback_data: "set:areas" },
+  ]);
+  return { inline_keyboard: rows };
+}
+
+function wizardKeyboard({ keepLabel, keepData, extras } = {}) {
+  const rows = [];
+  if (extras?.length) rows.push(...extras);
+  if (keepLabel && keepData) rows.push([{ text: keepLabel, callback_data: keepData }]);
+  rows.push([
+    { text: "❌ Cancel", callback_data: "wiz:cancel" },
+    { text: "⬅️ Cars", callback_data: "wiz:tocars" },
   ]);
   return { inline_keyboard: rows };
 }
@@ -148,15 +286,83 @@ function hybridKeyboard() {
   return {
     inline_keyboard: [
       [
-        { text: "Yes — prefer hybrid", callback_data: "car:hybrid:yes" },
+        { text: "Yes — hybrid", callback_data: "car:hybrid:yes" },
         { text: "No", callback_data: "car:hybrid:no" },
       ],
       [
         { text: "❌ Cancel", callback_data: "wiz:cancel" },
-        { text: "⬅️ Cars list", callback_data: "wiz:tocars" },
+        { text: "⬅️ Cars", callback_data: "wiz:tocars" },
       ],
     ],
   };
+}
+
+function mileageCarKeyboard() {
+  const rows = [];
+  for (let i = 0; i < KM_OPTS.length; i += 2) {
+    rows.push(
+      KM_OPTS.slice(i, i + 2).map((km) => ({
+        text: `${km.toLocaleString()} km`,
+        callback_data: `carkm:${km}`,
+      }))
+    );
+  }
+  rows.push([{ text: "⌨️ Type custom km", callback_data: "carkm:custom" }]);
+  rows.push([
+    { text: "❌ Cancel", callback_data: "wiz:cancel" },
+    { text: "⬅️ Cars", callback_data: "wiz:tocars" },
+  ]);
+  return { inline_keyboard: rows };
+}
+
+function buildSearchFromWizard(draft) {
+  const query = (draft.query || draft.name || "").trim();
+  const qLower = query.toLowerCase();
+  const name = (draft.name || query).trim();
+  const hybrid = !!draft.hybrid;
+  const searches = {
+    name,
+    query: qLower,
+    queries: [qLower],
+    min_year: draft.min_year,
+    max_year: draft.max_year,
+    min_price: draft.min_price ?? 0,
+    max_price: draft.max_price ?? 999999,
+    max_mileage_km: draft.max_mileage_km ?? 250000,
+    must_include_any: qLower.split(/\s+/).filter(Boolean).slice(0, 3),
+    must_include_all: [],
+    powertrain_any: hybrid
+      ? ["hybrid", "hev", "phev", "plug-in", "plugin", "plug in"]
+      : [],
+    body_styles: [],
+    require_body_style: false,
+    require_mileage: false,
+  };
+  const compact = qLower.replace(/\s+/g, "");
+  if (compact && !searches.queries.includes(compact)) searches.queries.push(compact);
+  if (!searches.must_include_any.length) searches.must_include_any = [qLower];
+  return searches;
+}
+
+async function dispatchScan(env, jobId = null) {
+  const [owner, repo] = String(env.GITHUB_REPO).split("/");
+  const body = { ref: "main" };
+  if (jobId) body.inputs = { job_id: jobId };
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/actions/workflows/marketplace.yml/dispatches`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+        "User-Agent": "marketplace-telegram-webhook",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+  if (!res.ok) throw new Error(`GitHub dispatch ${res.status}: ${await res.text()}`);
 }
 
 async function cancelWizard(env, chatId, { editMessageId } = {}) {
@@ -175,7 +381,7 @@ async function cancelWizard(env, chatId, { editMessageId } = {}) {
   }
 }
 
-async function promptCarName(env, chatId, wizard, { editing } = {}) {
+async function promptCarName(env, chatId, wizard, { editing, custom } = {}) {
   const draft = wizard.draft || {};
   const extras = editing
     ? []
@@ -185,19 +391,15 @@ async function promptCarName(env, chatId, wizard, { editing } = {}) {
           { text: "Kia Optima Hybrid", callback_data: "wiz:pick:Kia Optima Hybrid" },
         ],
       ];
+  const title = custom ? "🔎 <b>Custom search</b> (not saved)" : editing ? "✏️ Edit car" : "➕ Add car";
   await tg(env, "sendMessage", {
     chat_id: chatId,
-    text: editing
-      ? `✏️ Editing <b>${escapeHtml(draft.name || "car")}</b>\n\n` +
-        "🚗 <b>Step 1/5 — Car name</b>\n" +
-        `Current: <code>${escapeHtml(draft.name || "")}</code>\n` +
-        "Type a new name, or tap Keep."
-      : "🚗 <b>Step 1/5 — Car name</b>\n" +
-        "What car should we search?\n\n" +
-        "Tap an example, or type your own:\n" +
-        "• <code>Mazda 3</code>\n" +
-        "• <code>Kia Optima Hybrid</code>\n" +
-        "• <code>Honda Civic</code>",
+    text:
+      `${title}\n${CANADA_NOTE}\n\n` +
+      "🚗 <b>Step 1/6 — Car</b>\n" +
+      (editing
+        ? `Current: <code>${escapeHtml(draft.name || "")}</code>\nType new name or Keep.`
+        : "Tap an example or type a name (e.g. <code>Honda Civic</code>)."),
     parse_mode: "HTML",
     reply_markup: wizardKeyboard({
       keepLabel: editing && draft.name ? `✅ Keep “${draft.name}”` : null,
@@ -209,37 +411,29 @@ async function promptCarName(env, chatId, wizard, { editing } = {}) {
 
 async function promptCarQuery(env, chatId, wizard) {
   const draft = wizard.draft || {};
-  const suggestion = draft.query || draft.name || "";
+  const suggestion = (draft.query || draft.name || "").toLowerCase();
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
-      "🔎 <b>Step 2/5 — Facebook search text</b>\n" +
-      "What should we type into Marketplace?\n\n" +
-      "Examples: <code>mazda 3</code> · <code>kia optima hybrid</code>\n" +
-      (suggestion
-        ? `\nSuggested: <code>${escapeHtml(suggestion.toLowerCase())}</code>`
-        : ""),
+      "🔎 <b>Step 2/6 — Facebook search text</b>\n" +
+      "Same as typing into Marketplace.\n" +
+      `Suggested: <code>${escapeHtml(suggestion)}</code>`,
     parse_mode: "HTML",
     reply_markup: wizardKeyboard({
-      keepLabel: suggestion ? `✅ Use “${suggestion.toLowerCase()}”` : null,
+      keepLabel: suggestion ? `✅ Use “${suggestion}”` : null,
       keepData: suggestion ? "wiz:keep" : null,
     }),
   });
 }
 
 async function promptCarYears(env, chatId, wizard) {
-  const draft = wizard.draft || {};
-  const has =
-    draft.min_year != null && draft.max_year != null
-      ? `${draft.min_year}-${draft.max_year}`
-      : "";
+  const d = wizard.draft || {};
+  const has = d.min_year != null ? `${d.min_year}-${d.max_year}` : "";
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
-      "📅 <b>Step 3/5 — Years</b>\n" +
-      "Type a range like <code>2010-2014</code>\n" +
-      "Example (Optima): <code>2011-2017</code>" +
-      (has ? `\n\nCurrent: <code>${has}</code>` : ""),
+      "📅 <b>Step 3/6 — Years</b>\nType <code>2010-2014</code> or tap:" +
+      (has ? `\nCurrent: <code>${has}</code>` : ""),
     parse_mode: "HTML",
     reply_markup: wizardKeyboard({
       keepLabel: has ? `✅ Keep ${has}` : null,
@@ -259,18 +453,13 @@ async function promptCarYears(env, chatId, wizard) {
 }
 
 async function promptCarPrice(env, chatId, wizard) {
-  const draft = wizard.draft || {};
-  const has =
-    draft.min_price != null && draft.max_price != null
-      ? `${draft.min_price}-${draft.max_price}`
-      : "";
+  const d = wizard.draft || {};
+  const has = d.min_price != null ? `${d.min_price}-${d.max_price}` : "";
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
-      "💰 <b>Step 4/5 — Price (CAD)</b>\n" +
-      "Type a range like <code>300-2300</code>\n" +
-      "Example: <code>1000-3000</code>" +
-      (has ? `\n\nCurrent: <code>$${has}</code>` : ""),
+      "💰 <b>Step 4/6 — Price (CAD)</b>\nType <code>300-2300</code> or tap:" +
+      (has ? `\nCurrent: <code>$${has}</code>` : ""),
     parse_mode: "HTML",
     reply_markup: wizardKeyboard({
       keepLabel: has ? `✅ Keep $${has}` : null,
@@ -289,26 +478,36 @@ async function promptCarPrice(env, chatId, wizard) {
   });
 }
 
-async function promptCarHybrid(env, chatId) {
+async function promptCarMileage(env, chatId, wizard) {
+  const d = wizard.draft || {};
+  const cur = d.max_mileage_km ?? 250000;
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
-      "🔋 <b>Step 5/5 — Hybrid preference</b>\n" +
-      "Optional note for the search name. Marketplace still searches your query text.\n" +
-      "Optima Hybrid → Yes · Mazda 3 → No",
+      "⏱ <b>Step 5/6 — Max mileage for THIS car</b>\n" +
+      `Current / default: <b>${Number(cur).toLocaleString()} km</b>\n` +
+      "Each car has its own max km.",
+    parse_mode: "HTML",
+    reply_markup: mileageCarKeyboard(),
+  });
+}
+
+async function promptCarHybrid(env, chatId) {
+  await tg(env, "sendMessage", {
+    chat_id: chatId,
+    text: "🔋 <b>Step 6/6 — Hybrid preference?</b>\nOptima Hybrid → Yes · Mazda 3 → No",
     parse_mode: "HTML",
     reply_markup: hybridKeyboard(),
   });
 }
 
-/** Advance wizard after a value for the current step is chosen */
 async function advanceCarWizard(env, chatId, wizard) {
   const draft = wizard.draft || {};
   if (wizard.step === "car_name") {
     if (!draft.name) {
       await tg(env, "sendMessage", {
         chat_id: chatId,
-        text: "Please choose or type a car name.",
+        text: "Choose or type a car name.",
         reply_markup: wizardKeyboard(),
       });
       return;
@@ -329,10 +528,10 @@ async function advanceCarWizard(env, chatId, wizard) {
     return;
   }
   if (wizard.step === "car_years") {
-    if (draft.min_year == null || draft.max_year == null) {
+    if (draft.min_year == null) {
       await tg(env, "sendMessage", {
         chat_id: chatId,
-        text: "❌ Pick a year range or type <code>2010-2014</code>",
+        text: "Pick years or type <code>2010-2014</code>",
         parse_mode: "HTML",
         reply_markup: wizardKeyboard(),
       });
@@ -344,125 +543,124 @@ async function advanceCarWizard(env, chatId, wizard) {
     return;
   }
   if (wizard.step === "car_price") {
-    if (draft.min_price == null || draft.max_price == null) {
+    if (draft.min_price == null) {
       await tg(env, "sendMessage", {
         chat_id: chatId,
-        text: "❌ Pick a price range or type <code>300-2300</code>",
+        text: "Pick price or type <code>300-2300</code>",
         parse_mode: "HTML",
         reply_markup: wizardKeyboard(),
       });
       return;
     }
+    if (draft.max_mileage_km == null) draft.max_mileage_km = 250000;
+    wizard.draft = draft;
+    wizard.step = "car_mileage";
+    await setWizard(env, chatId, wizard);
+    await promptCarMileage(env, chatId, wizard);
+    return;
+  }
+  if (wizard.step === "car_mileage") {
+    if (draft.max_mileage_km == null) draft.max_mileage_km = 250000;
+    wizard.draft = draft;
     wizard.step = "car_hybrid";
     await setWizard(env, chatId, wizard);
     await promptCarHybrid(env, chatId);
   }
 }
 
-function citiesKeyboard(selectedSlugs) {
-  const selected = new Set(selectedSlugs || []);
-  const rows = [];
-  for (let i = 0; i < CITIES.length; i += 2) {
-    const row = [];
-    for (let j = i; j < i + 2 && j < CITIES.length; j++) {
-      const c = CITIES[j];
-      const on = selected.has(c.slug);
-      row.push({
-        text: `${on ? "✅" : "⬜"} ${c.label}`,
-        callback_data: `city:toggle:${c.slug}`,
-      });
-    }
-    rows.push(row);
-  }
-  rows.push([
-    { text: "✅ All", callback_data: "city:all" },
-    { text: "⬜ None", callback_data: "city:none" },
-  ]);
-  rows.push([
-    { text: "💾 Save cities", callback_data: "city:save" },
-    { text: "⬅️ Back", callback_data: "set:menu" },
-  ]);
-  return { inline_keyboard: rows };
-}
+async function finishCarSave(env, chatId, wizard, hybrid) {
+  const cfg = await getConfig(env);
+  wizard.draft.hybrid = hybrid;
+  const search = buildSearchFromWizard(wizard.draft);
 
-function mileageKeyboard() {
-  return {
-    inline_keyboard: [
-      [
-        { text: "150,000", callback_data: "km:150000" },
-        { text: "200,000", callback_data: "km:200000" },
-      ],
-      [
-        { text: "250,000", callback_data: "km:250000" },
-        { text: "300,000", callback_data: "km:300000" },
-      ],
-      [{ text: "⌨️ Type custom km", callback_data: "km:custom" }],
-      [
-        { text: "❌ Cancel", callback_data: "set:menu" },
-        { text: "⬅️ Back", callback_data: "set:menu" },
-      ],
-    ],
-  };
-}
-
-function syncLocationsFromKeywords(cfg) {
-  const labels = new Set(cfg.location_keywords || []);
-  cfg.locations = CITIES.filter((c) => labels.has(c.label)).map((c) => c.slug);
-  if (!cfg.locations.length) {
-    cfg.locations = CITIES.map((c) => c.slug);
-  }
-}
-
-function buildSearchFromWizard(draft) {
-  const query = (draft.query || draft.name || "").trim();
-  const qLower = query.toLowerCase();
-  const name = (draft.name || query).trim();
-  const hybrid = !!draft.hybrid;
-  const searches = {
-    name,
-    query: qLower,
-    queries: [qLower],
-    min_year: draft.min_year,
-    max_year: draft.max_year,
-    min_price: draft.min_price ?? 0,
-    max_price: draft.max_price ?? 999999,
-    must_include_any: qLower.split(/\s+/).filter(Boolean).slice(0, 3),
-    must_include_all: [],
-    powertrain_any: hybrid
-      ? ["hybrid", "hev", "phev", "plug-in", "plugin", "plug in"]
-      : [],
-    body_styles: [],
-    require_body_style: false,
-    require_mileage: false,
-  };
-  // Extra query variants for mazda3-style
-  if (!searches.queries.includes(qLower.replace(/\s+/g, ""))) {
-    searches.queries.push(qLower.replace(/\s+/g, ""));
-  }
-  if (!searches.must_include_any.length) {
-    searches.must_include_any = [qLower];
-  }
-  return searches;
-}
-
-async function dispatchScan(env) {
-  const [owner, repo] = String(env.GITHUB_REPO).split("/");
-  const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/actions/workflows/marketplace.yml/dispatches`,
-    {
-      method: "POST",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${env.GITHUB_TOKEN}`,
-        "X-GitHub-Api-Version": "2022-11-28",
-        "Content-Type": "application/json",
-        "User-Agent": "marketplace-telegram-webhook",
+  if (wizard.mode === "custom") {
+    // One-off: need location next (or use saved areas)
+    wizard.step = "custom_area";
+    wizard.draft = { ...wizard.draft, hybrid };
+    wizard.search = search;
+    await setWizard(env, chatId, wizard);
+    await tg(env, "sendMessage", {
+      chat_id: chatId,
+      text:
+        "📍 <b>Custom search location</b>\n" +
+        CANADA_NOTE +
+        "\n\nUse your saved locations, or pick a different city:",
+      parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "✅ Use saved locations", callback_data: "custom:usesaved" }],
+          [{ text: "➕ Pick another city", callback_data: "custom:pickcity" }],
+          [
+            { text: "❌ Cancel", callback_data: "wiz:cancel" },
+          ],
+        ],
       },
-      body: JSON.stringify({ ref: "main" }),
-    }
-  );
-  if (!res.ok) {
-    throw new Error(`GitHub dispatch ${res.status}: ${await res.text()}`);
+    });
+    return;
+  }
+
+  if (wizard.index >= 0) cfg.searches[wizard.index] = search;
+  else cfg.searches.push(search);
+  await saveConfig(env, cfg);
+  await setWizard(env, chatId, null);
+  await tg(env, "sendMessage", {
+    chat_id: chatId,
+    text:
+      `✅ Saved <b>${escapeHtml(search.name)}</b> ` +
+      `(max ${(search.max_mileage_km || 250000).toLocaleString()} km)\n\n` +
+      formatSettings(cfg),
+    parse_mode: "HTML",
+    reply_markup: mainKeyboard(),
+  });
+}
+
+async function runCustomJob(env, chatId, search, market_areas) {
+  const jobId = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const base = await getConfig(env);
+  const job = {
+    country: "CA",
+    max_mileage_km: search.max_mileage_km || 250000,
+    market_areas,
+    locations: market_areas.map((a) => a.slug),
+    location_keywords: [],
+    searches: [search],
+    scraper: {
+      ...base.scraper,
+      // Custom: fewer hubs — only vehicles mode for speed
+      url_modes: ["vehicles"],
+      search_mode_locations: market_areas.map((a) => a.slug),
+      max_scrolls: 6,
+    },
+  };
+  await env.SETTINGS.put(`job:${jobId}`, JSON.stringify(job), {
+    expirationTtl: 60 * 60 * 6,
+  });
+  await setWizard(env, chatId, null);
+  await tg(env, "sendMessage", {
+    chat_id: chatId,
+    text:
+      "🔎 <b>Custom search starting</b> (not saved to settings)\n" +
+      CANADA_NOTE +
+      `\n\n🚗 ${escapeHtml(search.name)}` +
+      `\n🔎 <code>${escapeHtml(search.query)}</code>` +
+      `\n📅 ${search.min_year}–${search.max_year}` +
+      `\n💰 $${search.min_price}–$${search.max_price}` +
+      `\n⏱ max ${(search.max_mileage_km || 250000).toLocaleString()} km` +
+      `\n📍 ${market_areas.map((a) => `${a.label} (${a.radius_km} km)`).join(", ")}` +
+      "\n\n⏳ Running on GitHub now…",
+    parse_mode: "HTML",
+  });
+  try {
+    await dispatchScan(env, jobId);
+    await tg(env, "sendMessage", {
+      chat_id: chatId,
+      text: "🚀 Custom search dispatched. Results will appear here.",
+    });
+  } catch (err) {
+    await tg(env, "sendMessage", {
+      chat_id: chatId,
+      text: `❌ Failed to start custom search:\n${String(err.message || err)}`,
+    });
   }
 }
 
@@ -478,7 +676,6 @@ async function handleCallback(env, cq) {
     });
     return;
   }
-
   await tg(env, "answerCallbackQuery", { callback_query_id: cq.id });
 
   const cfg = await getConfig(env);
@@ -510,108 +707,23 @@ async function handleCallback(env, cq) {
     await tg(env, "editMessageText", {
       chat_id: chatId,
       message_id: cq.message.message_id,
-      text: "🚗 Choose a search to edit, or add a new one:",
+      text: "🚗 Cars (each has its own max km):",
       reply_markup: carsKeyboard(cfg),
     });
     return;
   }
 
-  if (data === "set:cities") {
-    const selected = CITIES.filter((c) =>
-      (cfg.location_keywords || []).includes(c.label)
-    ).map((c) => c.slug);
-    wizard = { step: "cities", selected };
-    await setWizard(env, chatId, wizard);
-    await tg(env, "editMessageText", {
-      chat_id: chatId,
-      message_id: cq.message.message_id,
-      text:
-        "📍 Tap cities to turn ✅ on / ⬜ off.\n" +
-        "No typing needed (avoids misspellings like Vaugan/Margham).",
-      reply_markup: citiesKeyboard(selected),
-    });
-    return;
-  }
-
-  if (data.startsWith("city:")) {
-    const selected = new Set(wizard.selected || []);
-    if (data.startsWith("city:toggle:")) {
-      const slug = data.split(":")[2];
-      if (selected.has(slug)) selected.delete(slug);
-      else selected.add(slug);
-    } else if (data === "city:all") {
-      CITIES.forEach((c) => selected.add(c.slug));
-    } else if (data === "city:none") {
-      selected.clear();
-    } else if (data === "city:save") {
-      cfg.location_keywords = CITIES.filter((c) => selected.has(c.slug)).map(
-        (c) => c.label
-      );
-      syncLocationsFromKeywords(cfg);
-      await saveConfig(env, cfg);
-      await setWizard(env, chatId, null);
-      await tg(env, "editMessageText", {
-        chat_id: chatId,
-        message_id: cq.message.message_id,
-        text: formatSettings(cfg),
-        parse_mode: "HTML",
-        reply_markup: mainKeyboard(),
-      });
-      await tg(env, "sendMessage", {
-        chat_id: chatId,
-        text: "✅ Cities saved for everyone in this group.",
-      });
-      return;
-    }
-    wizard.selected = [...selected];
-    wizard.step = "cities";
-    await setWizard(env, chatId, wizard);
-    await tg(env, "editMessageText", {
-      chat_id: chatId,
-      message_id: cq.message.message_id,
-      text:
-        "📍 Tap cities to turn ✅ on / ⬜ off.\n" +
-        "No typing needed (avoids misspellings).",
-      reply_markup: citiesKeyboard([...selected]),
-    });
-    return;
-  }
-
-  if (data === "set:mileage") {
-    await tg(env, "editMessageText", {
-      chat_id: chatId,
-      message_id: cq.message.message_id,
-      text: `⏱ Current max mileage: ${cfg.max_mileage_km} km\nChoose a value:`,
-      reply_markup: mileageKeyboard(),
-    });
-    return;
-  }
-
-  if (data.startsWith("km:")) {
-    if (data === "km:custom") {
-      await setWizard(env, chatId, { step: "mileage_custom" });
-      await tg(env, "sendMessage", {
-        chat_id: chatId,
-        text: "Type max mileage in km.\nExample: <code>250000</code>",
-        parse_mode: "HTML",
-        reply_markup: wizardKeyboard(),
-      });
-      return;
-    }
-    const km = Number(data.split(":")[1]);
-    cfg.max_mileage_km = km;
-    await saveConfig(env, cfg);
+  if (data === "set:areas") {
     await setWizard(env, chatId, null);
     await tg(env, "editMessageText", {
       chat_id: chatId,
       message_id: cq.message.message_id,
-      text: formatSettings(cfg),
+      text:
+        "📍 <b>Locations + search radius</b>\n" +
+        CANADA_NOTE +
+        "\n\nLike Facebook: pick a city, then km radius.\nTap a row to change radius, or add/remove.",
       parse_mode: "HTML",
-      reply_markup: mainKeyboard(),
-    });
-    await tg(env, "sendMessage", {
-      chat_id: chatId,
-      text: `✅ Max mileage set to ${km.toLocaleString()} km`,
+      reply_markup: areasKeyboard(cfg),
     });
     return;
   }
@@ -626,15 +738,138 @@ async function handleCallback(env, cq) {
     await tg(env, "editMessageText", {
       chat_id: chatId,
       message_id: cq.message.message_id,
-      text: "🚗 Choose a search to edit, or add a new one:",
+      text: "🚗 Cars:",
       reply_markup: carsKeyboard(cfg),
     });
     return;
   }
 
+  if (data === "area:add") {
+    await setWizard(env, chatId, { step: "area_pick", page: 0 });
+    await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message.message_id,
+      text:
+        "📍 <b>Pick a Canadian city</b> (correct spelling):\n" +
+        CANADA_NOTE +
+        "\n\nTap a city, then choose radius.",
+      parse_mode: "HTML",
+      reply_markup: cityPickerKeyboard(0, "locpick"),
+    });
+    return;
+  }
+
+  if (data.startsWith("locpickpage:")) {
+    const page = Number(data.split(":")[1]) || 0;
+    wizard = { step: "area_pick", page };
+    await setWizard(env, chatId, wizard);
+    await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message.message_id,
+      text: "📍 Pick a Canadian city:",
+      reply_markup: cityPickerKeyboard(page, "locpick"),
+    });
+    return;
+  }
+
+  if (data.startsWith("locpick:")) {
+    const slug = data.slice("locpick:".length);
+    const city = CANADA_CITIES.find((c) => c.slug === slug);
+    if (!city) return;
+    wizard = { step: "area_radius", pendingCity: city };
+    await setWizard(env, chatId, wizard);
+    await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message.message_id,
+      text: `📍 <b>${escapeHtml(city.label)}</b>\nChoose search radius (like Facebook):`,
+      parse_mode: "HTML",
+      reply_markup: radiusKeyboard("rad"),
+    });
+    return;
+  }
+
+  if (data.startsWith("rad:")) {
+    const km = Number(data.split(":")[1]);
+    const city = wizard.pendingCity;
+    if (!city || !Number.isFinite(km)) return;
+    cfg.market_areas = cfg.market_areas || [];
+    const existing = cfg.market_areas.findIndex((a) => a.slug === city.slug);
+    const area = { slug: city.slug, label: city.label, radius_km: km };
+    if (existing >= 0) cfg.market_areas[existing] = area;
+    else cfg.market_areas.push(area);
+    syncAreas(cfg);
+    await saveConfig(env, cfg);
+    await setWizard(env, chatId, null);
+    await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message.message_id,
+      text:
+        `✅ Added <b>${escapeHtml(city.label)}</b> · ${km} km\n\n` + formatSettings(cfg),
+      parse_mode: "HTML",
+      reply_markup: areasKeyboard(cfg),
+    });
+    return;
+  }
+
+  if (data.startsWith("area:edit:")) {
+    const index = Number(data.split(":")[2]);
+    const area = cfg.market_areas[index];
+    if (!area) return;
+    wizard = { step: "area_radius", pendingCity: area, editIndex: index };
+    await setWizard(env, chatId, wizard);
+    await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message.message_id,
+      text: `📍 Change radius for <b>${escapeHtml(area.label)}</b>\nCurrent: ${area.radius_km} km`,
+      parse_mode: "HTML",
+      reply_markup: radiusKeyboard("radedit"),
+    });
+    return;
+  }
+
+  if (data.startsWith("radedit:")) {
+    const km = Number(data.split(":")[1]);
+    const index = wizard.editIndex;
+    if (index == null || !cfg.market_areas[index] || !Number.isFinite(km)) return;
+    cfg.market_areas[index].radius_km = km;
+    syncAreas(cfg);
+    await saveConfig(env, cfg);
+    await setWizard(env, chatId, null);
+    await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message.message_id,
+      text: `✅ Radius updated to ${km} km\n\n` + formatSettings(cfg),
+      parse_mode: "HTML",
+      reply_markup: areasKeyboard(cfg),
+    });
+    return;
+  }
+
+  if (data.startsWith("area:del:")) {
+    const index = Number(data.split(":")[2]);
+    if ((cfg.market_areas || []).length <= 1) {
+      await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: "⚠️ Keep at least one location.",
+      });
+      return;
+    }
+    const removed = cfg.market_areas.splice(index, 1)[0];
+    syncAreas(cfg);
+    await saveConfig(env, cfg);
+    await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message.message_id,
+      text: `🗑 Removed ${escapeHtml(removed?.label || "location")}\n\n` + formatSettings(cfg),
+      parse_mode: "HTML",
+      reply_markup: areasKeyboard(cfg),
+    });
+    return;
+  }
+
+  // —— car wizard callbacks ——
   if (data === "wiz:keep") {
-    if (!wizard.step) return;
-    await advanceCarWizard(env, chatId, wizard);
+    if (wizard.step) await advanceCarWizard(env, chatId, wizard);
     return;
   }
 
@@ -671,8 +906,29 @@ async function handleCallback(env, cq) {
     return;
   }
 
+  if (data.startsWith("carkm:")) {
+    if (wizard.step !== "car_mileage" && wizard.step !== "mileage_custom") return;
+    if (data === "carkm:custom") {
+      wizard.step = "mileage_custom";
+      await setWizard(env, chatId, wizard);
+      await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: "Type max km for this car.\nExample: <code>250000</code>",
+        parse_mode: "HTML",
+        reply_markup: wizardKeyboard(),
+      });
+      return;
+    }
+    const km = Number(data.split(":")[1]);
+    wizard.draft = wizard.draft || {};
+    wizard.draft.max_mileage_km = km;
+    await setWizard(env, chatId, wizard);
+    await advanceCarWizard(env, chatId, wizard);
+    return;
+  }
+
   if (data === "car:add") {
-    const w = { step: "car_name", draft: {}, index: -1 };
+    const w = { step: "car_name", draft: { max_mileage_km: 250000 }, index: -1 };
     await setWizard(env, chatId, w);
     await promptCarName(env, chatId, w, { editing: false });
     return;
@@ -692,6 +948,7 @@ async function handleCallback(env, cq) {
         max_year: s.max_year,
         min_price: s.min_price,
         max_price: s.max_price,
+        max_mileage_km: s.max_mileage_km ?? 250000,
         hybrid: !!(s.powertrain_any && s.powertrain_any.length),
       },
     };
@@ -705,16 +962,13 @@ async function handleCallback(env, cq) {
     const s = cfg.searches[index];
     if (!s) return;
     if ((cfg.searches || []).length <= 1) {
-      await tg(env, "sendMessage", {
-        chat_id: chatId,
-        text: "⚠️ Keep at least one car search.",
-      });
+      await tg(env, "sendMessage", { chat_id: chatId, text: "⚠️ Keep at least one car." });
       return;
     }
     await tg(env, "editMessageText", {
       chat_id: chatId,
       message_id: cq.message.message_id,
-      text: `🗑 Delete <b>${escapeHtml(s.name)}</b>?\nThis affects the whole group.`,
+      text: `🗑 Delete <b>${escapeHtml(s.name)}</b>?`,
       parse_mode: "HTML",
       reply_markup: {
         inline_keyboard: [
@@ -730,19 +984,13 @@ async function handleCallback(env, cq) {
 
   if (data.startsWith("car:del:")) {
     const index = Number(data.split(":")[2]);
-    if ((cfg.searches || []).length <= 1) {
-      await tg(env, "sendMessage", {
-        chat_id: chatId,
-        text: "⚠️ Keep at least one car search.",
-      });
-      return;
-    }
+    if ((cfg.searches || []).length <= 1) return;
     const removed = cfg.searches.splice(index, 1)[0];
     await saveConfig(env, cfg);
     await tg(env, "editMessageText", {
       chat_id: chatId,
       message_id: cq.message.message_id,
-      text: `🗑 Removed <b>${escapeHtml(removed?.name || "search")}</b>\n\n` + formatSettings(cfg),
+      text: `🗑 Removed <b>${escapeHtml(removed?.name || "")}</b>\n\n` + formatSettings(cfg),
       parse_mode: "HTML",
       reply_markup: mainKeyboard(),
     });
@@ -751,33 +999,91 @@ async function handleCallback(env, cq) {
 
   if (data === "car:hybrid:yes" || data === "car:hybrid:no") {
     if (wizard.step !== "car_hybrid") return;
-    wizard.draft.hybrid = data.endsWith("yes");
-    const search = buildSearchFromWizard(wizard.draft);
-    if (wizard.index >= 0) cfg.searches[wizard.index] = search;
-    else cfg.searches.push(search);
-    await saveConfig(env, cfg);
-    await setWizard(env, chatId, null);
-    await tg(env, "sendMessage", {
+    await finishCarSave(env, chatId, wizard, data.endsWith("yes"));
+    return;
+  }
+
+  // custom search location branch
+  if (data === "custom:usesaved") {
+    if (wizard.mode !== "custom" || !wizard.search) return;
+    const areas = cfg.market_areas || [];
+    if (!areas.length) {
+      await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: "No saved locations. Pick a city:",
+        reply_markup: cityPickerKeyboard(0, "customloc"),
+      });
+      wizard.step = "custom_pick";
+      await setWizard(env, chatId, wizard);
+      return;
+    }
+    await runCustomJob(env, chatId, wizard.search, areas);
+    return;
+  }
+
+  if (data === "custom:pickcity") {
+    wizard.step = "custom_pick";
+    wizard.page = 0;
+    await setWizard(env, chatId, wizard);
+    await tg(env, "editMessageText", {
       chat_id: chatId,
-      text: `✅ Saved search <b>${escapeHtml(search.name)}</b> for the whole group.\n\n` + formatSettings(cfg),
+      message_id: cq.message.message_id,
+      text: "📍 Pick city for this custom search:\n" + CANADA_NOTE,
       parse_mode: "HTML",
-      reply_markup: mainKeyboard(),
+      reply_markup: cityPickerKeyboard(0, "customloc"),
     });
+    return;
+  }
+
+  if (data.startsWith("customlocpage:")) {
+    const page = Number(data.split(":")[1]) || 0;
+    wizard.page = page;
+    await setWizard(env, chatId, wizard);
+    await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message.message_id,
+      text: "📍 Pick city:",
+      reply_markup: cityPickerKeyboard(page, "customloc"),
+    });
+    return;
+  }
+
+  if (data.startsWith("customloc:")) {
+    const slug = data.slice("customloc:".length);
+    const city = CANADA_CITIES.find((c) => c.slug === slug);
+    if (!city) return;
+    wizard.pendingCity = city;
+    wizard.step = "custom_radius";
+    await setWizard(env, chatId, wizard);
+    await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message.message_id,
+      text: `📍 ${escapeHtml(city.label)} — radius for this custom search:`,
+      parse_mode: "HTML",
+      reply_markup: radiusKeyboard("customrad"),
+    });
+    return;
+  }
+
+  if (data.startsWith("customrad:")) {
+    const km = Number(data.split(":")[1]);
+    const city = wizard.pendingCity;
+    if (!city || !wizard.search || !Number.isFinite(km)) return;
+    await runCustomJob(env, chatId, wizard.search, [
+      { slug: city.slug, label: city.label, radius_km: km },
+    ]);
   }
 }
 
 async function handleWizardText(env, chatId, text) {
   const wizard = await getWizard(env, chatId);
   if (!wizard?.step) return false;
-  if (text.startsWith("/")) {
-    const cmd = text.split(/\s+/)[0].split("@")[0].toLowerCase();
-    if (cmd === "/cancel") {
-      await cancelWizard(env, chatId);
-      return true;
-    }
+  const cmd = text.split(/\s+/)[0].split("@")[0].toLowerCase();
+  if (cmd === "/cancel") {
+    await cancelWizard(env, chatId);
+    return true;
   }
 
-  const cfg = await getConfig(env);
   const draft = wizard.draft || {};
   const trimmed = text.trim();
 
@@ -786,20 +1092,17 @@ async function handleWizardText(env, chatId, text) {
     if (!Number.isFinite(km) || km < 1000) {
       await tg(env, "sendMessage", {
         chat_id: chatId,
-        text: "❌ Invalid km. Example: <code>250000</code>",
+        text: "❌ Invalid. Example: <code>250000</code>",
         parse_mode: "HTML",
         reply_markup: wizardKeyboard(),
       });
       return true;
     }
-    cfg.max_mileage_km = Math.round(km);
-    await saveConfig(env, cfg);
-    await setWizard(env, chatId, null);
-    await tg(env, "sendMessage", {
-      chat_id: chatId,
-      text: `✅ Max mileage set to ${cfg.max_mileage_km.toLocaleString()} km`,
-      reply_markup: mainKeyboard(),
-    });
+    draft.max_mileage_km = Math.round(km);
+    wizard.draft = draft;
+    wizard.step = "car_mileage";
+    await setWizard(env, chatId, wizard);
+    await advanceCarWizard(env, chatId, wizard);
     return true;
   }
 
@@ -810,7 +1113,6 @@ async function handleWizardText(env, chatId, text) {
     await advanceCarWizard(env, chatId, wizard);
     return true;
   }
-
   if (wizard.step === "car_query") {
     draft.query = trimmed === "." ? draft.name : trimmed;
     wizard.draft = draft;
@@ -818,20 +1120,14 @@ async function handleWizardText(env, chatId, text) {
     await advanceCarWizard(env, chatId, wizard);
     return true;
   }
-
   if (wizard.step === "car_years") {
     const m = trimmed.match(/^(\d{4})\s*[-–to]+\s*(\d{4})$/i);
     if (!m) {
       await tg(env, "sendMessage", {
         chat_id: chatId,
-        text: "❌ Use format <code>2010-2014</code> or tap a button.",
+        text: "❌ Use <code>2010-2014</code> or tap a button.",
         parse_mode: "HTML",
         reply_markup: wizardKeyboard({
-          keepLabel:
-            draft.min_year != null
-              ? `✅ Keep ${draft.min_year}-${draft.max_year}`
-              : null,
-          keepData: draft.min_year != null ? "wiz:keep" : null,
           extras: [
             [
               { text: "2010–2014", callback_data: "wiz:years:2010-2014" },
@@ -849,27 +1145,14 @@ async function handleWizardText(env, chatId, text) {
     await advanceCarWizard(env, chatId, wizard);
     return true;
   }
-
   if (wizard.step === "car_price") {
     const m = trimmed.match(/^(\d+)\s*[-–to]+\s*(\d+)$/i);
     if (!m) {
       await tg(env, "sendMessage", {
         chat_id: chatId,
-        text: "❌ Use format <code>300-2300</code> or tap a button.",
+        text: "❌ Use <code>300-2300</code> or tap a button.",
         parse_mode: "HTML",
-        reply_markup: wizardKeyboard({
-          keepLabel:
-            draft.min_price != null
-              ? `✅ Keep $${draft.min_price}-${draft.max_price}`
-              : null,
-          keepData: draft.min_price != null ? "wiz:keep" : null,
-          extras: [
-            [
-              { text: "$300–2300", callback_data: "wiz:price:300-2300" },
-              { text: "$1000–3000", callback_data: "wiz:price:1000-3000" },
-            ],
-          ],
-        }),
+        reply_markup: wizardKeyboard(),
       });
       return true;
     }
@@ -880,7 +1163,6 @@ async function handleWizardText(env, chatId, text) {
     await advanceCarWizard(env, chatId, wizard);
     return true;
   }
-
   return false;
 }
 
@@ -888,51 +1170,68 @@ async function handleScan(env, chatId) {
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
-      "🔎 Scan request received!\n" +
-      "⏳ Starting Marketplace search on GitHub now…\n" +
-      "⏱ Usually 3–15 minutes.\n" +
-      "📬 Only NEW cars will be posted (no duplicates).",
+      "🔎 Scan with <b>saved settings</b>…\n" +
+      CANADA_NOTE +
+      "\n⏳ 3–15 min · only NEW cars (no duplicates).",
+    parse_mode: "HTML",
   });
   try {
     await dispatchScan(env);
-    await tg(env, "sendMessage", {
-      chat_id: chatId,
-      text: "🚀 Marketplace scan started immediately.",
-    });
+    await tg(env, "sendMessage", { chat_id: chatId, text: "🚀 Scan started." });
   } catch (err) {
-    const raw = String(err.message || err);
-    let hint = "See GUIDE.html → Errors.";
-    if (raw.includes("401") || raw.includes("Bad credentials")) {
-      hint = "Fix: refresh GITHUB_TOKEN on the Cloudflare Worker.";
-    } else if (raw.includes("404")) {
-      hint = "Fix: check GITHUB_REPO / marketplace.yml on main.";
-    } else if (raw.includes("403")) {
-      hint = "Fix: GitHub token needs Actions: write.";
-    }
     await tg(env, "sendMessage", {
       chat_id: chatId,
-      text: `❌ Failed to start GitHub scan:\n${raw}\n\n${hint}`,
+      text: `❌ Failed:\n${String(err.message || err)}`,
     });
   }
+}
+
+async function startCustomSearch(env, chatId) {
+  const w = {
+    mode: "custom",
+    step: "car_name",
+    draft: { max_mileage_km: 250000 },
+    index: -1,
+  };
+  await setWizard(env, chatId, w);
+  await tg(env, "sendMessage", {
+    chat_id: chatId,
+    text:
+      "🔎 <b>Custom search</b>\n" +
+      CANADA_NOTE +
+      "\n\nOne-time run — <b>not</b> saved to /settings.\n" +
+      "Cancel anytime with the ❌ button or /cancel.",
+    parse_mode: "HTML",
+  });
+  await promptCarName(env, chatId, w, { custom: true });
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // Live config for GitHub Actions
     if (request.method === "GET" && url.pathname === "/config") {
       const token = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
       if (!token || token !== env.CONFIG_TOKEN) {
         return new Response("unauthorized", { status: 401 });
       }
-      const cfg = await getConfig(env);
-      return Response.json(cfg);
+      return Response.json(await getConfig(env));
     }
 
-    if (request.method !== "POST") {
-      return new Response("ok");
+    if (request.method === "GET" && url.pathname.startsWith("/job/")) {
+      const token = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
+      if (!token || token !== env.CONFIG_TOKEN) {
+        return new Response("unauthorized", { status: 401 });
+      }
+      const jobId = url.pathname.slice("/job/".length);
+      const raw = await env.SETTINGS.get(`job:${jobId}`);
+      if (!raw) return new Response("not found", { status: 404 });
+      return new Response(raw, {
+        headers: { "content-type": "application/json" },
+      });
     }
+
+    if (request.method !== "POST") return new Response("ok");
 
     let update;
     try {
@@ -948,21 +1247,17 @@ export default {
       }
 
       const msg = update.message;
-      if (!msg) return new Response("ok");
+      if (!msg?.text) return new Response("ok");
       const chatId = msg.chat.id;
-      const text = (msg.text || "").trim();
-      if (!text) return new Response("ok");
-
+      const text = msg.text.trim();
       const cmd = text.split(/\s+/)[0].split("@")[0].toLowerCase();
 
-      if (await handleWizardText(env, chatId, text)) {
-        return new Response("ok");
-      }
+      if (await handleWizardText(env, chatId, text)) return new Response("ok");
 
       if (ID.has(cmd)) {
         await tg(env, "sendMessage", {
           chat_id: chatId,
-          text: `Chat id: ${chatId}\nType: ${msg.chat.type}\nTitle: ${msg.chat.title || msg.chat.first_name || "n/a"}`,
+          text: `Chat id: ${chatId}\nType: ${msg.chat.type}`,
         });
         return new Response("ok");
       }
@@ -971,12 +1266,14 @@ export default {
         await tg(env, "sendMessage", {
           chat_id: chatId,
           text:
-            "🇨🇦 Canada Marketplace car alerts\n\n" +
-            "/scan — start search now\n" +
-            "/settings — view/change shared filters\n" +
-            "/id — show chat id\n" +
-            "/help — this message\n\n" +
-            "Settings are shared by the whole group.",
+            "🇨🇦 <b>Canada Marketplace car alerts</b>\n\n" +
+            "/scan — run saved filters\n" +
+            "/settings — shared cars, km, locations+radius\n" +
+            "/customsearch — one-off search (not saved)\n" +
+            "/cancel — abort wizard\n" +
+            "/id — chat id\n\n" +
+            CANADA_NOTE,
+          parse_mode: "HTML",
         });
         return new Response("ok");
       }
@@ -989,14 +1286,26 @@ export default {
           });
           return new Response("ok");
         }
-        const cfg = await getConfig(env);
         await setWizard(env, chatId, null);
+        const cfg = await getConfig(env);
         await tg(env, "sendMessage", {
           chat_id: chatId,
           text: formatSettings(cfg),
           parse_mode: "HTML",
           reply_markup: mainKeyboard(),
         });
+        return new Response("ok");
+      }
+
+      if (CUSTOM.has(cmd)) {
+        if (!authorized(chatId, env)) {
+          await tg(env, "sendMessage", {
+            chat_id: chatId,
+            text: `⚠️ Not authorized.\nChat id: ${chatId}`,
+          });
+          return new Response("ok");
+        }
+        await startCustomSearch(env, chatId);
         return new Response("ok");
       }
 
@@ -1014,7 +1323,6 @@ export default {
     } catch (err) {
       return new Response(String(err), { status: 500 });
     }
-
     return new Response("ok");
   },
 };

@@ -22,6 +22,17 @@ MILEAGE_RE = re.compile(
 )
 
 
+# Facebook Marketplace URL `radius` is in miles. Map user km → nearest FB mile option.
+_FB_RADIUS_MILES = (1, 2, 5, 10, 20, 40, 60, 80, 100, 250, 500)
+
+
+def km_to_facebook_radius_miles(radius_km: int | float | None) -> int:
+    if radius_km is None or radius_km <= 0:
+        return 40  # ~65 km, FB default-ish
+    miles_approx = float(radius_km) / 1.60934
+    return min(_FB_RADIUS_MILES, key=lambda m: abs(m - miles_approx))
+
+
 def build_search_url(
     location_slug: str,
     search: SearchConfig,
@@ -29,6 +40,7 @@ def build_search_url(
     *,
     query: str | None = None,
     mode: str = "search",
+    radius_km: int | None = None,
 ) -> str:
     params = {
         "query": query or search.query,
@@ -38,6 +50,7 @@ def build_search_url(
         "maxYear": search.max_year,
         "exact": "false",
         "sortBy": sort_by,
+        "radius": km_to_facebook_radius_miles(radius_km),
     }
     if search.max_mileage_km is not None:
         # Marketplace vehicle mileage filter (when supported by the UI)
@@ -452,17 +465,30 @@ class MarketplaceScraper:
         delay_between_searches_sec: float = 2.5,
         url_modes: list[str] | None = None,
         search_mode_locations: list[str] | None = None,
+        market_areas: list[dict[str, Any]] | None = None,
     ) -> list[Listing]:
         results: dict[str, Listing] = {}
         modes = url_modes or ["vehicles", "search"]
         search_hubs = set(search_mode_locations or [])
+
+        areas: list[dict[str, Any]] = list(market_areas or [])
+        if not areas:
+            areas = [{"slug": slug, "radius_km": 65} for slug in locations]
 
         with sync_playwright() as p:
             browser, page = self._launch(p)
             try:
                 for search in searches:
                     for query in search.all_queries():
-                        for location in locations:
+                        for area in areas:
+                            location = str(area.get("slug") or "").strip()
+                            if not location:
+                                continue
+                            radius_km = area.get("radius_km", 65)
+                            try:
+                                radius_km = int(radius_km)
+                            except (TypeError, ValueError):
+                                radius_km = 65
                             for mode in modes:
                                 if (
                                     mode == "search"
@@ -476,12 +502,14 @@ class MarketplaceScraper:
                                     sort_by,
                                     query=query,
                                     mode=mode,
+                                    radius_km=radius_km,
                                 )
                                 logger.info(
-                                    "Scanning [%s] q=%r @ %s (%s)",
+                                    "Scanning [%s] q=%r @ %s r=%skm (%s)",
                                     search.name,
                                     query,
                                     location,
+                                    radius_km,
                                     mode,
                                 )
                                 try:
@@ -516,11 +544,12 @@ class MarketplaceScraper:
                                         if listing.location and not prev.location:
                                             prev.location = listing.location
                                 logger.info(
-                                    "[%s] q=%r @ %s/%s → %d raw, %d kept (unique %d)",
+                                    "[%s] q=%r @ %s/%s r=%skm → %d raw, %d kept (unique %d)",
                                     search.name,
                                     query,
                                     location,
                                     mode,
+                                    radius_km,
                                     len(batch),
                                     kept,
                                     len(results),

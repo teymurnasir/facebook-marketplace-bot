@@ -7,7 +7,12 @@ on:
   schedule:
     # Every 30 minutes (UTC)
     - cron: "*/30 * * * *"
-  workflow_dispatch: # manual "Run workflow" button
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Optional Cloudflare job id for /customsearch (one-off)"
+        required: false
+        default: ""
 
 concurrency:
   group: marketplace-scan
@@ -30,22 +35,34 @@ jobs:
           pip install -r requirements.txt
           playwright install chromium --with-deps
 
-      - name: Load live Telegram settings
+      - name: Load live Telegram settings or custom job
         env:
           SETTINGS_CONFIG_URL: ${{ secrets.SETTINGS_CONFIG_URL }}
           SETTINGS_CONFIG_TOKEN: ${{ secrets.SETTINGS_CONFIG_TOKEN }}
+          JOB_ID: ${{ github.event.inputs.job_id }}
         run: |
-          if [ -n "$SETTINGS_CONFIG_URL" ] && [ -n "$SETTINGS_CONFIG_TOKEN" ]; then
+          set -euo pipefail
+          if [ -n "${JOB_ID:-}" ] && [ -n "${SETTINGS_CONFIG_URL:-}" ] && [ -n "${SETTINGS_CONFIG_TOKEN:-}" ]; then
+            BASE="${SETTINGS_CONFIG_URL%/config}"
+            curl -fsS \
+              -H "Authorization: Bearer ${SETTINGS_CONFIG_TOKEN}" \
+              "${BASE}/job/${JOB_ID}" \
+              -o /tmp/live-config.json
+            echo "CUSTOM_SEARCH=1" >> "$GITHUB_ENV"
+            echo "Loaded custom job ${JOB_ID}"
+          elif [ -n "${SETTINGS_CONFIG_URL:-}" ] && [ -n "${SETTINGS_CONFIG_TOKEN:-}" ]; then
             curl -fsS \
               -H "Authorization: Bearer ${SETTINGS_CONFIG_TOKEN}" \
               "$SETTINGS_CONFIG_URL" \
               -o /tmp/live-config.json
-            python scripts/json_config_to_yaml.py /tmp/live-config.json config.yaml
-            echo "---- live config.yaml (head) ----"
-            head -n 60 config.yaml
+            echo "Loaded shared /settings config"
           else
             echo "No live settings secrets — using repo config.yaml"
+            exit 0
           fi
+          python scripts/json_config_to_yaml.py /tmp/live-config.json config.yaml
+          echo "---- config.yaml (head) ----"
+          head -n 80 config.yaml
 
       - name: Restore Facebook session
         env:
@@ -83,6 +100,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HEADLESS: "true"
           FACEBOOK_STORAGE_STATE: storage_state.json
+          CUSTOM_SEARCH: ${{ env.CUSTOM_SEARCH }}
         run: python main.py --once
 
       - name: Save seen.db for next run

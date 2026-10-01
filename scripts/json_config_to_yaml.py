@@ -10,26 +10,55 @@ from pathlib import Path
 import yaml
 
 
+def normalize(data: dict) -> dict:
+    fallback_km = int(data.get("max_mileage_km") or 250000)
+    searches = []
+    for s in data.get("searches") or []:
+        s = dict(s)
+        if s.get("max_mileage_km") is None:
+            s["max_mileage_km"] = fallback_km
+        searches.append(s)
+
+    market_areas = list(data.get("market_areas") or [])
+    if not market_areas and data.get("locations"):
+        # Migrate old city-slug list → areas with default 65 km radius
+        for slug in data["locations"]:
+            market_areas.append(
+                {
+                    "slug": slug,
+                    "label": str(slug).replace("-", " ").title() + ", ON",
+                    "radius_km": 65,
+                }
+            )
+
+    locations = [a["slug"] for a in market_areas] or list(data.get("locations") or [])
+
+    return {
+        "country": data.get("country") or "CA",
+        "max_mileage_km": fallback_km,
+        "market_areas": market_areas,
+        "locations": locations,
+        "location_keywords": data.get("location_keywords") or [],
+        "searches": searches,
+        "scraper": data.get("scraper") or {},
+    }
+
+
 def main() -> int:
     if len(sys.argv) < 3:
         print("Usage: json_config_to_yaml.py input.json output.yaml", file=sys.stderr)
         return 1
     src = Path(sys.argv[1])
     dst = Path(sys.argv[2])
-    data = json.loads(src.read_text(encoding="utf-8"))
-    # Keep key order readable
-    ordered = {
-        "max_mileage_km": data.get("max_mileage_km", 250000),
-        "locations": data.get("locations") or [],
-        "location_keywords": data.get("location_keywords") or [],
-        "searches": data.get("searches") or [],
-        "scraper": data.get("scraper") or {},
-    }
+    data = normalize(json.loads(src.read_text(encoding="utf-8")))
     dst.write_text(
-        yaml.safe_dump(ordered, sort_keys=False, allow_unicode=True),
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
-    print(f"Wrote {dst} ({len(ordered['searches'])} searches, {len(ordered['locations'])} hubs)")
+    print(
+        f"Wrote {dst} ({len(data['searches'])} searches, "
+        f"{len(data['market_areas'])} areas)"
+    )
     return 0
 
 

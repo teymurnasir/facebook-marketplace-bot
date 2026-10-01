@@ -190,10 +190,15 @@
         <tr>
           <td><code>/settings</code> (or <code>/filters</code>)</td>
           <td>
-            Shows <strong>shared</strong> filters for the whole group (not per person).
-            Buttons to view / edit cars, years, price, max km, and cities.
-            Cities use ✅/⬜ taps so names cannot be misspelled.
-            Add-car wizard asks: car (with examples) → search text → years → price → hybrid.
+            <strong>Canada-only</strong> shared filters for the whole group.
+            Cars (each with its own max km), plus locations with km radius (tap city list — no typing misspellings).
+            Wizard: car → search text → years → price → max km → hybrid.
+          </td>
+        </tr>
+        <tr>
+          <td><code>/customsearch</code></td>
+          <td>
+            One-off search wizard (not saved). Same friendly buttons, then runs once and posts matches.
           </td>
         </tr>
         <tr>
@@ -213,7 +218,7 @@
     <p>Anyone in the authorized group can use commands. Settings changes apply to every member and to the next scan. History of old alerts is usually visible to new members (unless group history is hidden).</p>
 
     <h2 id="search">4. Search parameters</h2>
-    <p>Preferred: change filters in Telegram with <code>/settings</code> (stored in Cloudflare KV; scans load them automatically). Fallback: edit <code>config.yaml</code> and push to <code>main</code>.</p>
+    <p><strong>Canada only.</strong> Preferred: <code>/settings</code> (locations + radius like Facebook, per-car max km). One-off: <code>/customsearch</code>. Fallback: edit <code>config.yaml</code>.</p>
     <div class="grid two">
       <div class="card">
         <strong>Mazda 3</strong>

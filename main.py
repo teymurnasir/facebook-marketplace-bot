@@ -48,11 +48,15 @@ def run_once(
         delay_between_searches_sec=cfg["scraper"]["delay_between_searches_sec"],
         url_modes=cfg["scraper"].get("url_modes"),
         search_mode_locations=cfg["scraper"].get("search_mode_locations"),
+        market_areas=cfg.get("market_areas"),
     )
+
+    # Custom one-off searches re-send matches even if already in seen.db
+    ignore_seen = env_bool("CUSTOM_SEARCH", False)
 
     new_count = 0
     for listing in listings:
-        if store.is_seen(listing.listing_id):
+        if not ignore_seen and store.is_seen(listing.listing_id):
             continue
         new_count += 1
         logger.info("NEW: %s | %s | %s", listing.title, listing.price, listing.url)
@@ -70,14 +74,15 @@ def run_once(
 
     logger.info("Cycle done: %d scraped, %d new", len(listings), new_count)
     if notify and telegram is not None and env_bool("TELEGRAM_SCAN_SUMMARY", True):
+        prefix = "🔎 Custom search" if ignore_seen else "✅ Scan"
         if new_count:
             telegram.send_text(
-                f"✅ Scan finished — <b>{new_count}</b> new listing(s) sent above."
+                f"{prefix} finished — <b>{new_count}</b> listing(s) sent above."
             )
         else:
             telegram.send_text(
-                f"✅ Scan finished — no new cars "
-                f"(checked {len(listings)} match(es))."
+                f"{prefix} finished — no matching cars "
+                f"(checked {len(listings)} raw match(es))."
             )
     return new_count
 
@@ -118,12 +123,13 @@ def main() -> int:
             return 1
 
     logger.info(
-        "Watching %d searches × %d locations every %d min (seed=%s once=%s)",
+        "Watching %d searches × %d area(s) every %d min (seed=%s once=%s custom=%s)",
         len(cfg["searches"]),
-        len(cfg["locations"]),
+        len(cfg.get("market_areas") or cfg["locations"]),
         interval,
         seed,
         once,
+        env_bool("CUSTOM_SEARCH", False),
     )
 
     try:

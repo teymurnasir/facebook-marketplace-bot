@@ -49,6 +49,19 @@ curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
   --data-urlencode 'allowed_updates=["message","callback_query"]' | tee /tmp/setwebhook.json
 echo
 
+echo "Updating Telegram command menu…"
+curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyCommands" \
+  -H "Content-Type: application/json" \
+  -d '{"commands":[
+    {"command":"scan","description":"Run Marketplace search now"},
+    {"command":"settings","description":"View/change shared search filters"},
+    {"command":"filters","description":"Same as /settings"},
+    {"command":"help","description":"How this bot works"},
+    {"command":"id","description":"Show this chat id"},
+    {"command":"cancel","description":"Cancel settings wizard"}
+  ]}'
+echo
+
 echo "Setting GitHub Actions secrets for live config…"
 gh secret set SETTINGS_CONFIG_URL --repo "$REPO" --body "${WORKER_URL}/config"
 gh secret set SETTINGS_CONFIG_TOKEN --repo "$REPO" --body "$CONFIG_TOKEN"

@@ -1,10 +1,39 @@
-# Canadian Facebook Marketplace car alerts — high-coverage settings
+# Canadian Facebook Marketplace car alerts (Canada only)
 
-# Max odometer (km). Known mileage above this is skipped.
-# Unknown mileage is KEPT so we don't miss cars that omit km on the card.
 max_mileage_km: 250000
 
-# Marketplace city hubs we OPEN for search (your exact regions).
+market_areas:
+  - slug: toronto
+    label: Toronto, ON
+    radius_km: 65
+  - slug: richmond-hill
+    label: Richmond Hill, ON
+    radius_km: 65
+  - slug: brampton
+    label: Brampton, ON
+    radius_km: 65
+  - slug: north-york
+    label: North York, ON
+    radius_km: 65
+  - slug: vaughan
+    label: Vaughan, ON
+    radius_km: 65
+  - slug: markham
+    label: Markham, ON
+    radius_km: 65
+  - slug: east-york
+    label: East York, ON
+    radius_km: 65
+  - slug: mississauga
+    label: Mississauga, ON
+    radius_km: 65
+  - slug: scarborough
+    label: Scarborough, ON
+    radius_km: 65
+  - slug: hamilton
+    label: Hamilton, ON
+    radius_km: 65
+
 locations:
   - toronto
   - richmond-hill
@@ -17,23 +46,10 @@ locations:
   - scarborough
   - hamilton
 
-# ONLY keep listings whose city text matches these (same 10 regions).
-# Empty location on a card is still kept (Facebook sometimes omits the city).
-location_keywords:
-  - Toronto
-  - Richmond Hill
-  - Brampton
-  - North York
-  - Vaughan
-  - Markham
-  - East York
-  - Mississauga
-  - Scarborough
-  - Hamilton
+location_keywords: []
 
 searches:
   - name: Mazda 3
-    # Multiple FB queries so odd titles still surface
     queries:
       - "mazda 3"
       - "mazda3"
@@ -43,6 +59,7 @@ searches:
     max_year: 2014
     min_price: 300
     max_price: 2300
+    max_mileage_km: 250000
     must_include_any:
       - mazda 3
       - mazda3
@@ -66,11 +83,10 @@ searches:
     max_year: 2017
     min_price: 1000
     max_price: 3000
+    max_mileage_km: 250000
     must_include_any:
       - optima
       - k5
-    # Prefer hybrid in title, but do NOT require it — many real hybrid ads
-    # only say "Kia Optima" while Facebook search already used "hybrid".
     powertrain_any: []
     body_styles:
       - sedan
@@ -79,15 +95,12 @@ searches:
 
 scraper:
   sort_by: creation_time_descend
-  # Deeper scroll = more cards per search (slower, fewer misses)
   max_scrolls: 6
   delay_between_searches_sec: 2
   timeout_ms: 60000
-  # Vehicles for car filters; also run generic /search on core hubs
   url_modes:
     - vehicles
     - search
-  # Generic Marketplace /search only on these hubs (avoids doubling every city)
   search_mode_locations:
     - toronto
     - hamilton

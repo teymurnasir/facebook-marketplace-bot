@@ -45,8 +45,47 @@ def load_config(path: str | Path = "config.yaml") -> dict[str, Any]:
     url_modes = [m for m in url_modes if m in {"vehicles", "search"}] or ["search"]
     search_mode_locations = list(scraper.get("search_mode_locations") or [])
 
+    market_areas = []
+    for raw_area in data.get("market_areas") or []:
+        if not isinstance(raw_area, dict):
+            continue
+        slug = str(raw_area.get("slug") or "").strip()
+        if not slug:
+            continue
+        try:
+            radius_km = int(raw_area.get("radius_km", 65))
+        except (TypeError, ValueError):
+            radius_km = 65
+        market_areas.append(
+            {
+                "slug": slug,
+                "label": str(raw_area.get("label") or slug),
+                "radius_km": radius_km,
+            }
+        )
+
+    locations = list(data.get("locations") or [])
+    if not market_areas and locations:
+        market_areas = [
+            {
+                "slug": slug,
+                "label": str(slug).replace("-", " ").title(),
+                "radius_km": 65,
+            }
+            for slug in locations
+        ]
+    if not locations and market_areas:
+        locations = [a["slug"] for a in market_areas]
+    if not locations:
+        locations = ["toronto"]
+        market_areas = [
+            {"slug": "toronto", "label": "Toronto, ON", "radius_km": 65}
+        ]
+
     return {
-        "locations": list(data.get("locations") or ["toronto"]),
+        "country": data.get("country") or "CA",
+        "locations": locations,
+        "market_areas": market_areas,
         "location_keywords": list(data.get("location_keywords") or []),
         "searches": searches,
         "scraper": {

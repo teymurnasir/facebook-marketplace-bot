@@ -54,9 +54,13 @@ def main() -> int:
             f"{base}/setMyCommands",
             json={
                 "commands": [
-                    {"command": "scan", "description": "Run Marketplace search now"},
-                    {"command": "help", "description": "How this bot works"},
+                    {"command": "scan", "description": "Run saved Marketplace filters"},
+                    {"command": "settings", "description": "Shared cars, km, locations+radius"},
+                    {"command": "customsearch", "description": "One-off custom car search (not saved)"},
+                    {"command": "filters", "description": "Same as /settings"},
+                    {"command": "help", "description": "How this Canada bot works"},
                     {"command": "id", "description": "Show this chat's Telegram id"},
+                    {"command": "cancel", "description": "Cancel current wizard"},
                 ]
             },
         )

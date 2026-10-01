@@ -1,29 +1,23 @@
 {
+  "country": "CA",
   "max_mileage_km": 250000,
+  "market_areas": [
+    { "slug": "toronto", "label": "Toronto, ON", "radius_km": 65 },
+    { "slug": "richmond-hill", "label": "Richmond Hill, ON", "radius_km": 65 },
+    { "slug": "brampton", "label": "Brampton, ON", "radius_km": 65 },
+    { "slug": "north-york", "label": "North York, ON", "radius_km": 65 },
+    { "slug": "vaughan", "label": "Vaughan, ON", "radius_km": 65 },
+    { "slug": "markham", "label": "Markham, ON", "radius_km": 65 },
+    { "slug": "east-york", "label": "East York, ON", "radius_km": 65 },
+    { "slug": "mississauga", "label": "Mississauga, ON", "radius_km": 65 },
+    { "slug": "scarborough", "label": "Scarborough, ON", "radius_km": 65 },
+    { "slug": "hamilton", "label": "Hamilton, ON", "radius_km": 65 }
+  ],
   "locations": [
-    "toronto",
-    "richmond-hill",
-    "brampton",
-    "north-york",
-    "vaughan",
-    "markham",
-    "east-york",
-    "mississauga",
-    "scarborough",
-    "hamilton"
+    "toronto", "richmond-hill", "brampton", "north-york", "vaughan",
+    "markham", "east-york", "mississauga", "scarborough", "hamilton"
   ],
-  "location_keywords": [
-    "Toronto",
-    "Richmond Hill",
-    "Brampton",
-    "North York",
-    "Vaughan",
-    "Markham",
-    "East York",
-    "Mississauga",
-    "Scarborough",
-    "Hamilton"
-  ],
+  "location_keywords": [],
   "searches": [
     {
       "name": "Mazda 3",
@@ -33,6 +27,7 @@
       "max_year": 2014,
       "min_price": 300,
       "max_price": 2300,
+      "max_mileage_km": 250000,
       "must_include_any": ["mazda 3", "mazda3", "mazdaspeed", "speed3"],
       "must_include_all": [],
       "powertrain_any": [],
@@ -48,6 +43,7 @@
       "max_year": 2017,
       "min_price": 1000,
       "max_price": 3000,
+      "max_mileage_km": 250000,
       "must_include_any": ["optima", "k5"],
       "must_include_all": [],
       "powertrain_any": [],
