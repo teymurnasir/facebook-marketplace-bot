@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Canada Marketplace Bot — Guide</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --card: #fff;
+      --text: #1a1f24;
+      --muted: #5c6770;
+      --line: #e2e8ee;
+      --accent: #0b6e4f;
+      --accent-soft: #e6f4ef;
+      --warn: #9a3412;
+      --warn-bg: #fff7ed;
+      --err: #9f1239;
+      --err-bg: #fff1f2;
+      --ok: #166534;
+      --ok-bg: #f0fdf4;
+      --code: #0f172a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(900px 400px at 10% -10%, #d9efe6 0%, transparent 55%),
+        var(--bg);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 28px 18px 64px; }
+    h1 { font-size: 1.7rem; margin: 0 0 6px; letter-spacing: -0.02em; }
+    h2 {
+      font-size: 1.15rem;
+      margin: 28px 0 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--line);
+    }
+    h3 { font-size: 1rem; margin: 16px 0 8px; }
+    p, li { color: var(--text); }
+    .lead { color: var(--muted); margin: 0 0 18px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin: 10px 0;
+    }
+    .grid { display: grid; gap: 10px; }
+    @media (min-width: 720px) {
+      .grid.two { grid-template-columns: 1fr 1fr; }
+    }
+    code, .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.88em;
+    }
+    code {
+      background: #eef2f6;
+      padding: 1px 6px;
+      border-radius: 5px;
+    }
+    pre {
+      background: var(--code);
+      color: #e2e8f0;
+      padding: 12px 14px;
+      border-radius: 10px;
+      overflow: auto;
+      font-size: 0.85rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      font-size: 0.94rem;
+    }
+    th { background: #f8fafc; color: var(--muted); font-weight: 600; }
+    tr:last-child td { border-bottom: 0; }
+    .tag {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-right: 6px;
+    }
+    .tag.ok { background: var(--ok-bg); color: var(--ok); }
+    .tag.warn { background: var(--warn-bg); color: var(--warn); }
+    .tag.err { background: var(--err-bg); color: var(--err); }
+    .toc a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .toc a:hover { text-decoration: underline; }
+    .toc li { margin: 4px 0; color: var(--muted); }
+    .note {
+      background: var(--accent-soft);
+      border-left: 4px solid var(--accent);
+      padding: 10px 12px;
+      border-radius: 0 10px 10px 0;
+      margin: 12px 0;
+    }
+    .kbd {
+      border: 1px solid #cbd5e1;
+      background: #fff;
+      border-bottom-width: 2px;
+      padding: 0 6px;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9em;
+    }
+    footer {
+      margin-top: 36px;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Canada Marketplace → Telegram Bot</h1>
+    <p class="lead">
+      Compact guide for the project in this folder. Runs online (GitHub Actions + Cloudflare).
+      Laptop not required day-to-day.
+    </p>
+
+    <div class="card toc">
+      <strong>Contents</strong>
+      <ol>
+        <li><a href="#what">What it does</a></li>
+        <li><a href="#online">How it runs online</a></li>
+        <li><a href="#telegram">Telegram commands</a></li>
+        <li><a href="#search">Search parameters</a></li>
+        <li><a href="#files">Important files</a></li>
+        <li><a href="#local">Rare local maintenance</a></li>
+        <li><a href="#errors">Errors → what to do</a></li>
+      </ol>
+    </div>
+
+    <h2 id="what">1. What it does</h2>
+    <div class="card">
+      <ul>
+        <li>Searches <strong>Canadian Facebook Marketplace</strong> for your car filters</li>
+        <li>Sends matching links to the Telegram group <strong>Canada car alerts</strong></li>
+        <li>Remembers listing IDs in <code>seen.db</code> so the <strong>same post is never sent twice</strong></li>
+        <li>Auto-scan every <strong>30 minutes</strong> + instant <code>/scan</code></li>
+      </ul>
+    </div>
+
+    <h2 id="online">2. How it runs online</h2>
+    <div class="grid two">
+      <div class="card">
+        <h3>GitHub Actions</h3>
+        <p>Repo: <code>teymurnasir/facebook-marketplace-bot</code> (private)</p>
+        <p>Workflow <code>marketplace.yml</code> scrapes Marketplace and sends Telegram messages.</p>
+      </div>
+      <div class="card">
+        <h3>Cloudflare Worker</h3>
+        <p>Instant <code>/scan</code> webhook:</p>
+        <p class="mono">marketplace-telegram-webhook.hello-forward.workers.dev</p>
+        <p>Account currently used: <code>isa.efendiyev@gmail.com</code></p>
+      </div>
+    </div>
+    <div class="note">
+      Day-to-day: leave it alone. Only use a Mac when Facebook login expires
+      (re-save session → update GitHub secret).
+    </div>
+
+    <h2 id="telegram">3. Telegram commands</h2>
+    <table>
+      <thead>
+        <tr><th>Command</th><th>Result</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>/scan</code> (or <code>/search</code>, <code>/run</code>)</td>
+          <td>Starts a Marketplace scan immediately. Group gets progress + results.</td>
+        </tr>
+        <tr>
+          <td><code>/help</code></td>
+          <td>Short command list.</td>
+        </tr>
+        <tr>
+          <td><code>/id</code></td>
+          <td>Shows this chat’s Telegram id (needed if group id changes).</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>Anyone in the authorized group can use commands. History of old alerts is usually visible to new members (unless group history is hidden).</p>
+
+    <h2 id="search">4. Search parameters</h2>
+    <p>Edit <code>config.yaml</code>, then push to <code>main</code>.</p>
+    <div class="grid two">
+      <div class="card">
+        <strong>Mazda 3</strong>
+        <ul>
+          <li>Years 2010–2014</li>
+          <li>Price $300–$2300</li>
+          <li>Max 250,000 km (when shown)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <strong>Kia Optima Hybrid</strong>
+        <ul>
+          <li>Years 2011–2017</li>
+          <li>Price $1000–$3000</li>
+          <li>Must look hybrid / HEV / PHEV</li>
+          <li>Max 250,000 km (when shown)</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card">
+      <strong>Cities only</strong><br />
+      Toronto, Richmond Hill, Brampton, North York, Vaughan, Markham, East York, Mississauga, Scarborough, Hamilton
+    </div>
+    <p class="lead">A scan can take ~5–15 minutes (many pages). Missing some Facebook results is possible because Marketplace ranking/scroll is limited.</p>
+
+    <h2 id="files">5. Important files</h2>
+    <table>
+      <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>config.yaml</code></td><td>Searches, cities, mileage, scroll depth</td></tr>
+        <tr><td><code>.env</code></td><td>Local Telegram token / chat id (not in git)</td></tr>
+        <tr><td><code>storage_state.json</code></td><td>Facebook login cookies (not in git)</td></tr>
+        <tr><td><code>data/seen.db</code></td><td>Already-sent listing IDs</td></tr>
+        <tr><td><code>main.py</code></td><td>Scanner entrypoint</td></tr>
+        <tr><td><code>.github/workflows/marketplace.yml</code></td><td>Cloud scan every 30 min + on demand</td></tr>
+        <tr><td><code>telegram-webhook/</code></td><td>Instant <code>/scan</code> Cloudflare Worker</td></tr>
+        <tr><td><code>GUIDE.html</code></td><td>This guide</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="local">6. Rare local maintenance</h2>
+    <div class="card">
+      <p>Only when Facebook session dies (0 results / login wall):</p>
+<pre>cd /Users/teymurnasirli/Documents/facebook-script
+source .venv/bin/activate
+python -m src.save_session
+# log into Facebook, open Marketplace, press Enter
+
+base64 &lt; storage_state.json | tr -d '\n' | \
+  gh secret set FACEBOOK_STORAGE_STATE_B64 -R teymurnasir/facebook-marketplace-bot</pre>
+    </div>
+
+    <h2 id="errors">7. Errors → what to do</h2>
+    <p>If Telegram/GitHub shows an error, match it below.</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>You see</th>
+          <th>Meaning</th>
+          <th>Do this</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <span class="tag err">ERR</span>
+            <code>group chat was upgraded to a supergroup</code>
+            / Telegram <code>400</code>
+          </td>
+          <td>Group id changed after upgrade.</td>
+          <td>
+            In the group send <code>/id</code>. Update GitHub secret
+            <code>TELEGRAM_CHAT_ID</code> and Worker secret
+            <code>TELEGRAM_CHAT_IDS</code> to the new id (usually starts with <code>-100</code>).
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <span class="tag err">ERR</span>
+            <code>This chat is not authorized</code>
+          </td>
+          <td>Command came from a chat not in the allow-list.</td>
+          <td>
+            Send <code>/id</code>, add that id to
+            <code>TELEGRAM_CHAT_ID</code> (GitHub) and
+            <code>TELEGRAM_CHAT_IDS</code> (Cloudflare Worker).
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <span class="tag err">ERR</span>
+            <code>Failed to start GitHub scan</code> + <code>401</code> / Bad credentials
+          </td>
+          <td>Cloudflare Worker’s GitHub token expired.</td>
+          <td>
+<pre>cd telegram-webhook
+gh auth token | npx wrangler@4 secret put GITHUB_TOKEN</pre>
+            Then <code>/scan</code> again.
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <span class="tag err">ERR</span>
+            <code>403</code> / Resource not accessible
+          </td>
+          <td>Token cannot trigger Actions on the private repo.</td>
+          <td>
+            Create a GitHub PAT with <strong>Actions: write</strong> (and repo access),
+            put it in Worker secret <code>GITHUB_TOKEN</code>.
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <span class="tag err">ERR</span>
+            <code>404</code> workflow dispatch
+          </td>
+          <td>Wrong repo name or workflow missing.</td>
+          <td>
+            Confirm Worker secret <code>GITHUB_REPO=teymurnasir/facebook-marketplace-bot</code>
+            and file <code>.github/workflows/marketplace.yml</code> on <code>main</code>.
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <span class="tag warn">WARN</span>
+            Scan finishes with <code>0 scraped</code> / no cars for a long time
+          </td>
+          <td>Facebook session expired, blocked, or checkpoint.</td>
+          <td>
+            Re-run local <code>python -m src.save_session</code>, update
+            <code>FACEBOOK_STORAGE_STATE_B64</code>, then <code>/scan</code>.
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <span class="tag warn">WARN</span>
+            <code>Executable doesn't exist</code> / Playwright browser missing
+          </td>
+          <td>Chromium not installed locally.</td>
+          <td>
+<pre>source .venv/bin/activate
+playwright install chromium</pre>
+            (Cloud Actions installs browsers itself.)
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <span class="tag warn">WARN</span>
+            <code>/scan</code> does nothing for minutes
+          </td>
+          <td>Webhook down, or old polling mode.</td>
+          <td>
+            Check Worker URL is set:
+            Telegram <code>getWebhookInfo</code> should show
+            <code>marketplace-telegram-webhook.hello-forward.workers.dev</code>.
+            Re-deploy Worker if needed. Or run workflow manually in GitHub Actions.
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <span class="tag warn">WARN</span>
+            <code>Marketplace scan failed</code> in Telegram
+          </td>
+          <td>Exception during scrape (timeout, crash, FB block).</td>
+          <td>
+            Open the failed run in GitHub Actions → job log.
+            Usually refresh Facebook session or re-run <code>/scan</code>.
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <span class="tag ok">INFO</span>
+            <code>Scan finished — no new cars</code>
+          </td>
+          <td>Working. Matches found were already in <code>seen.db</code>.</td>
+          <td>Nothing. Wait for new listings, or reset DB if you want a full resend.</td>
+        </tr>
+        <tr>
+          <td>
+            <span class="tag ok">INFO</span>
+            Scan takes 5–15 minutes
+          </td>
+          <td>Normal with current coverage.</td>
+          <td>Wait. Limit is 45 minutes per Actions run.</td>
+        </tr>
+        <tr>
+          <td>
+            <span class="tag warn">WARN</span>
+            Same cars sent again after you expected silence
+          </td>
+          <td><code>seen.db</code> was reset or cloud cache missing.</td>
+          <td>
+            Expected after a DB reset. Otherwise check Actions cache /
+            <code>SEEN_DB_B64</code> secret still exists.
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <span class="tag err">ERR</span>
+            GitHub Action cancelled / timeout
+          </td>
+          <td>Run exceeded time or concurrency conflict.</td>
+          <td>
+            Re-run <code>/scan</code>. If frequent, reduce hubs/queries in
+            <code>config.yaml</code> or raise <code>timeout-minutes</code>.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Reset database (resend current matches)</h3>
+    <div class="card">
+      <p>Only if you intentionally want every currently found matching ad sent again:</p>
+<pre># local empty db
+rm -f data/seen.db
+python - <<'PY'
+import sqlite3
+from pathlib import Path
+Path('data').mkdir(exist_ok=True)
+c=sqlite3.connect('data/seen.db')
+c.execute("""CREATE TABLE seen_listings (
+  listing_id TEXT PRIMARY KEY,
+  search_name TEXT, title TEXT, url TEXT,
+  first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+c.commit()
+PY
+
+base64 &lt; data/seen.db | tr -d '\n' | \
+  gh secret set SEEN_DB_B64 -R teymurnasir/facebook-marketplace-bot
+
+# delete old seen-db caches in GitHub Actions UI or:
+# gh cache list -R teymurnasir/facebook-marketplace-bot
+# gh cache delete &lt;id&gt; -R teymurnasir/facebook-marketplace-bot
+
+# then in Telegram:
+# /scan</pre>
+    </div>
+
+    <h3>Quick status checks</h3>
+    <pre># latest scans
+gh run list -R teymurnasir/facebook-marketplace-bot --workflow marketplace.yml --limit 5
+
+# webhook still set?
+# open: https://api.telegram.org/bot&lt;TOKEN&gt;/getWebhookInfo</pre>
+
+    <div class="note">
+      <strong>Honest limit:</strong> Facebook does not give a full guaranteed catalog.
+      The bot finds what appears in the scrolled search results for your filters.
+      New listings are much more reliable than every old listing on Marketplace.
+    </div>
+
+    <footer>
+      Open this file anytime: <code>GUIDE.html</code> in the project folder.
+      Repo: teymurnasir/facebook-marketplace-bot · Bot: @canadacarsearchbot
+    </footer>
+  </div>
+</body>
+</html>

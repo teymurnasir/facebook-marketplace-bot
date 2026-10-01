@@ -133,13 +133,24 @@ def main() -> int:
                     "🚀 Marketplace scan is running now…\n"
                     "Please wait — results will arrive in this chat."
                 )
-            run_once(
-                scraper,
-                store,
-                telegram,
-                cfg,
-                notify=bool(telegram) and not seed,
-            )
+            try:
+                run_once(
+                    scraper,
+                    store,
+                    telegram,
+                    cfg,
+                    notify=bool(telegram) and not seed,
+                )
+            except Exception as exc:
+                logger.exception("Scan failed")
+                if telegram and not seed:
+                    telegram.send_text(
+                        "❌ <b>Marketplace scan failed</b>\n"
+                        f"<code>{type(exc).__name__}: {_escape_tg(str(exc)[:500])}</code>\n\n"
+                        "See GUIDE.html → Errors for what to do."
+                    )
+                if once or seed:
+                    return 1
             if seed:
                 logger.info("Seed complete — existing listings marked seen, no Telegram spam")
                 break
@@ -155,6 +166,14 @@ def main() -> int:
             telegram.close()
 
     return 0
+
+
+def _escape_tg(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
 
 
 if __name__ == "__main__":

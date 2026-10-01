@@ -128,9 +128,21 @@ export default {
             text: "🚀 Marketplace scan started immediately.",
           });
         } catch (err) {
+          const raw = String(err.message || err);
+          let hint = "See GUIDE.html → Errors.";
+          if (raw.includes("401") || raw.includes("Bad credentials")) {
+            hint =
+              "Fix: refresh GITHUB_TOKEN on the Cloudflare Worker (gh auth token / new PAT with Actions write).";
+          } else if (raw.includes("404")) {
+            hint =
+              "Fix: check GITHUB_REPO and that marketplace.yml exists on main.";
+          } else if (raw.includes("403") || raw.includes("Resource not accessible")) {
+            hint =
+              "Fix: GitHub token needs Actions: write on the private repo.";
+          }
           await tg(env, "sendMessage", {
             chat_id: chatId,
-            text: `❌ Failed to start GitHub scan:\n${String(err.message || err)}`,
+            text: `❌ Failed to start GitHub scan:\n${raw}\n\n${hint}`,
           });
         }
         return new Response("ok");
