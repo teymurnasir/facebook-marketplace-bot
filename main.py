@@ -13,6 +13,14 @@ from dotenv import load_dotenv
 
 from src.config_loader import load_config
 from src.scraper import MarketplaceScraper
+from src.settings_sync import (
+    ack_pending_scan,
+    fetch_job_config,
+    get_pending_scan,
+    settings_enabled,
+    sync_shared_settings,
+    write_config_yaml,
+)
 from src.storage import SeenStore
 from src.telegram_notifier import TelegramNotifier
 
@@ -21,6 +29,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("marketplace-bot")
 
 
@@ -104,15 +114,81 @@ def run_once(
     return new_count
 
 
+def _prepare_cycle(root: Path) -> tuple[dict, int, bool, dict | None]:
+    """
+    Sync Telegram settings / pending /scan job.
+    Returns (cfg, interval_minutes, custom_search, pending_payload_or_none).
+    """
+    config_path = root / "config.yaml"
+    custom = False
+    interval = int(os.getenv("POLL_INTERVAL_MINUTES", "30"))
+    pending_payload = None
+
+    pending = None
+    if settings_enabled():
+        try:
+            pending = get_pending_scan()
+        except Exception:
+            logger.exception("Could not check pending Telegram /scan")
+
+    if pending:
+        job_id = pending.get("job_id")
+        try:
+            if job_id:
+                raw = fetch_job_config(str(job_id))
+                write_config_yaml(raw, config_path)
+                custom = True
+                logger.info("Loaded custom Telegram job %s", job_id)
+            else:
+                live_interval = sync_shared_settings(config_path)
+                if live_interval is not None:
+                    interval = live_interval
+            pending_payload = pending
+        except Exception:
+            logger.exception("Failed to load pending Telegram scan")
+    elif settings_enabled():
+        try:
+            live_interval = sync_shared_settings(config_path)
+            if live_interval is not None:
+                interval = live_interval
+        except Exception:
+            logger.exception("Failed to sync Telegram /settings; using local config.yaml")
+
+    os.environ["CUSTOM_SEARCH"] = "1" if custom else "0"
+    cfg = load_config(config_path)
+    return cfg, interval, custom, pending_payload
+
+
+def _sleep_with_pending_checks(interval_min: int) -> bool:
+    """
+    Sleep until the next auto scan, but wake early if Telegram queues /scan.
+    Returns True if a pending scan arrived.
+    """
+    total = max(1, interval_min) * 60
+    step = 30
+    slept = 0
+    logger.info("Sleeping %d minutes (checking Telegram /scan every %ds)…", interval_min, step)
+    while slept < total:
+        time.sleep(min(step, total - slept))
+        slept += step
+        if not settings_enabled():
+            continue
+        try:
+            pending = get_pending_scan()
+        except Exception:
+            logger.exception("Pending-scan poll failed")
+            continue
+        if pending:
+            logger.info("Telegram /scan queued — waking early")
+            return True
+    return False
+
+
 def main() -> int:
     load_dotenv()
     root = Path(__file__).resolve().parent
     os.chdir(root)
 
-    cfg = load_config(root / "config.yaml")
-    interval = int(os.getenv("POLL_INTERVAL_MINUTES", "30"))
-    headless = env_bool("HEADLESS", True)
-    storage_state = os.getenv("FACEBOOK_STORAGE_STATE", "storage_state.json")
     once = "--once" in sys.argv
     seed = "--seed" in sys.argv  # mark current results seen without Telegram
 
@@ -123,13 +199,25 @@ def main() -> int:
         logger.error("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env")
         return 1
 
+    if settings_enabled():
+        logger.info("Local scanner mode: Telegram /settings + /scan via Cloudflare Worker")
+    else:
+        logger.warning(
+            "SETTINGS_CONFIG_URL / SETTINGS_CONFIG_TOKEN not set — "
+            "using local config.yaml only (Telegram /settings will not sync)"
+        )
+
     store = SeenStore(root / "data" / "seen.db")
+    headless = env_bool("HEADLESS", True)
+    storage_state = os.getenv("FACEBOOK_STORAGE_STATE", "storage_state.json")
+    telegram = TelegramNotifier(token, chat_id) if token and chat_id else None
+
+    cfg, interval, _custom, _pending = _prepare_cycle(root)
     scraper = MarketplaceScraper(
         storage_state_path=storage_state,
         headless=headless,
         timeout_ms=cfg["scraper"]["timeout_ms"],
     )
-    telegram = TelegramNotifier(token, chat_id) if token and chat_id else None
 
     # Announce only when the long-running process boots (not every --once / CI tick)
     if telegram and not seed and not once and env_bool("STARTUP_NOTIFY", True):
@@ -140,22 +228,30 @@ def main() -> int:
             return 1
 
     logger.info(
-        "Watching %d searches × %d area(s) every %d min (seed=%s once=%s custom=%s)",
+        "Watching %d searches × %d area(s) every %d min (seed=%s once=%s local_sync=%s)",
         len(cfg["searches"]),
         len(cfg.get("market_areas") or cfg["locations"]),
         interval,
         seed,
         once,
-        env_bool("CUSTOM_SEARCH", False),
+        settings_enabled(),
     )
 
     try:
         while True:
-            if telegram and once and not seed:
+            cfg, interval, custom, pending_payload = _prepare_cycle(root)
+            scraper.timeout_ms = cfg["scraper"]["timeout_ms"]
+
+            if telegram and (once or custom) and not seed:
                 telegram.send_text(
                     "🚀 Marketplace scan is running now…\n"
                     "Please wait — results will arrive in this chat."
                 )
+            if pending_payload is not None:
+                try:
+                    ack_pending_scan(pending_payload.get("requested_at"))
+                except Exception:
+                    logger.exception("Could not ack pending Telegram /scan")
             try:
                 run_once(
                     scraper,
@@ -179,8 +275,7 @@ def main() -> int:
                 break
             if once:
                 break
-            logger.info("Sleeping %d minutes…", interval)
-            time.sleep(interval * 60)
+            _sleep_with_pending_checks(interval)
     except KeyboardInterrupt:
         logger.info("Stopped by user")
     finally:

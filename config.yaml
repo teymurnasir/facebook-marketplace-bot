@@ -1,70 +1,63 @@
-# Canadian Facebook Marketplace car alerts (Canada only)
-# Add more locations in Telegram /settings — each location is searched separately.
-
+country: CA
+poll_interval_minutes: 30
 max_mileage_km: 250000
-
 market_areas:
-  - slug: toronto
-    label: Toronto, ON
-    radius_km: 65
-
+- slug: toronto
+  label: Toronto, ON
+  radius_km: 65
 locations:
-  - toronto
-
+- toronto
 location_keywords: []
-
 searches:
-  - name: Mazda 3
-    queries:
-      - "mazda 3"
-      - "mazda3"
-      - "mazdaspeed3"
-    query: "mazda 3"
-    min_year: 2010
-    max_year: 2014
-    min_price: 300
-    max_price: 2300
-    max_mileage_km: 250000
-    must_include_any:
-      - mazda 3
-      - mazda3
-      - mazdaspeed
-      - speed3
-    body_styles:
-      - sedan
-      - hatchback
-      - hatch
-    require_body_style: false
-    require_mileage: false
-
-  - name: Kia Optima Hybrid
-    queries:
-      - "kia optima hybrid"
-      - "optima hybrid"
-      - "kia optima"
-      - "optima hev"
-    query: "kia optima hybrid"
-    min_year: 2011
-    max_year: 2017
-    min_price: 1000
-    max_price: 3000
-    max_mileage_km: 250000
-    must_include_any:
-      - optima
-      - k5
-    powertrain_any: []
-    body_styles:
-      - sedan
-    require_body_style: false
-    require_mileage: false
-
+- name: Mazda 3
+  queries:
+  - mazda 3
+  - mazda3
+  - mazdaspeed3
+  query: mazda 3
+  min_year: 2010
+  max_year: 2014
+  min_price: 300
+  max_price: 2300
+  max_mileage_km: 250000
+  must_include_any:
+  - mazda 3
+  - mazda3
+  - mazdaspeed
+  - speed3
+  body_styles:
+  - sedan
+  - hatchback
+  - hatch
+  require_body_style: false
+  require_mileage: false
+- name: Kia Optima Hybrid
+  queries:
+  - kia optima hybrid
+  - optima hybrid
+  - kia optima
+  - optima hev
+  query: kia optima hybrid
+  min_year: 2011
+  max_year: 2017
+  min_price: 1000
+  max_price: 3000
+  max_mileage_km: 250000
+  must_include_any:
+  - optima
+  - k5
+  powertrain_any: []
+  body_styles:
+  - sedan
+  require_body_style: false
+  require_mileage: false
 scraper:
   sort_by: creation_time_descend
   max_scrolls: 6
   delay_between_searches_sec: 2
   timeout_ms: 60000
   url_modes:
-    - vehicles
-    - search
+  - vehicles
+  - search
   search_mode_locations:
-    - toronto
+  - toronto

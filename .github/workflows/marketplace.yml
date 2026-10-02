@@ -1,4 +1,5 @@
-# Runs on the dedicated self-hosted Windows runner (home IP / stable browser).
+# Emergency / manual only. Normal scans run on the always-on local PC scanner
+# (python main.py), not via GitHub Actions.
 # Repo must be PRIVATE — it uses your Facebook session secret.
 
 name: Marketplace scan

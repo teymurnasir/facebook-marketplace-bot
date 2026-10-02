@@ -10,7 +10,7 @@ crons = ["0 * * * *", "30 * * * *"]
 
 [[kv_namespaces]]
 binding = "SETTINGS"
-id = "5c38578fe2534736ae844cfb6bfc2453"
+id = "38734faac2d74a8793c5c490c72f7446"
 
 # Secrets:
 #   TELEGRAM_BOT_TOKEN

@@ -1,14 +1,9 @@
-# Asks the Worker whether a scan is due (Telegram poll_interval_minutes).
-# Explicit :00/:15/:30/:45 crons — GitHub's */15 is unreliable.
+# Disabled: local PC scanner owns the auto timer now.
+# Kept for manual debugging only (workflow_dispatch).
 
 name: Auto scan tick
 
 on:
-  schedule:
-    - cron: "0 * * * *"
-    - cron: "15 * * * *"
-    - cron: "30 * * * *"
-    - cron: "45 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -36,11 +31,4 @@ jobs:
           import json
           d=json.load(open("/tmp/tick.json"))
           print("result:", d)
-          if d.get("started"):
-            print("Scan dispatched")
-          elif d.get("skipped"):
-            print("Skipped:", d.get("skipped"))
-            if d.get("next_due_ms"):
-              from datetime import datetime, timezone
-              print("Next due UTC:", datetime.fromtimestamp(d["next_due_ms"]/1000, tz=timezone.utc).isoformat())
           PY
