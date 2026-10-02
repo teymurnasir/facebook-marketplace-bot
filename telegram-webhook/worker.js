@@ -235,7 +235,7 @@ function formatSettings(cfg) {
       lines.push("");
     });
   }
-  lines.push("/customsearch = one-off run (not saved)");
+  lines.push("/customsearch = one-off: location → radius → car → years → price → km");
   return lines.join("\n");
 }
 
@@ -335,10 +335,14 @@ function cityPickerKeyboard(page = 0, prefix = "locpick") {
     nav.push({ text: "Next ➡️", callback_data: `${prefix}page:${page + 1}` });
   }
   if (nav.length) rows.push(nav);
-  rows.push([
-    { text: "❌ Cancel", callback_data: "wiz:cancel" },
-    { text: "⬅️ Back", callback_data: "set:areas" },
-  ]);
+  if (String(prefix).startsWith("custom")) {
+    rows.push([{ text: "❌ Cancel", callback_data: "wiz:cancel" }]);
+  } else {
+    rows.push([
+      { text: "❌ Cancel", callback_data: "wiz:cancel" },
+      { text: "⬅️ Back", callback_data: "set:areas" },
+    ]);
+  }
   return { inline_keyboard: rows };
 }
 
@@ -352,21 +356,29 @@ function radiusKeyboard(prefix = "rad") {
       }))
     );
   }
-  rows.push([
-    { text: "❌ Cancel", callback_data: "wiz:cancel" },
-    { text: "⬅️ Back", callback_data: "set:areas" },
-  ]);
+  if (String(prefix).startsWith("custom")) {
+    rows.push([{ text: "❌ Cancel", callback_data: "wiz:cancel" }]);
+  } else {
+    rows.push([
+      { text: "❌ Cancel", callback_data: "wiz:cancel" },
+      { text: "⬅️ Back", callback_data: "set:areas" },
+    ]);
+  }
   return { inline_keyboard: rows };
 }
 
-function wizardKeyboard({ keepLabel, keepData, extras } = {}) {
+function wizardKeyboard({ keepLabel, keepData, extras, custom } = {}) {
   const rows = [];
   if (extras?.length) rows.push(...extras);
   if (keepLabel && keepData) rows.push([{ text: keepLabel, callback_data: keepData }]);
-  rows.push([
-    { text: "❌ Cancel", callback_data: "wiz:cancel" },
-    { text: "⬅️ Cars", callback_data: "wiz:tocars" },
-  ]);
+  if (custom) {
+    rows.push([{ text: "❌ Cancel", callback_data: "wiz:cancel" }]);
+  } else {
+    rows.push([
+      { text: "❌ Cancel", callback_data: "wiz:cancel" },
+      { text: "⬅️ Cars", callback_data: "wiz:tocars" },
+    ]);
+  }
   return { inline_keyboard: rows };
 }
 
@@ -385,7 +397,7 @@ function hybridKeyboard() {
   };
 }
 
-function mileageCarKeyboard() {
+function mileageCarKeyboard({ custom } = {}) {
   const rows = [];
   for (let i = 0; i < KM_OPTS.length; i += 2) {
     rows.push(
@@ -396,10 +408,14 @@ function mileageCarKeyboard() {
     );
   }
   rows.push([{ text: "⌨️ Type custom km", callback_data: "carkm:custom" }]);
-  rows.push([
-    { text: "❌ Cancel", callback_data: "wiz:cancel" },
-    { text: "⬅️ Cars", callback_data: "wiz:tocars" },
-  ]);
+  if (custom) {
+    rows.push([{ text: "❌ Cancel", callback_data: "wiz:cancel" }]);
+  } else {
+    rows.push([
+      { text: "❌ Cancel", callback_data: "wiz:cancel" },
+      { text: "⬅️ Cars", callback_data: "wiz:tocars" },
+    ]);
+  }
   return { inline_keyboard: rows };
 }
 
@@ -463,6 +479,7 @@ async function cancelWizard(env, chatId, { editMessageId } = {}) {
 
 async function promptCarName(env, chatId, wizard, { editing, custom } = {}) {
   const draft = wizard.draft || {};
+  const isCustom = custom || wizard?.mode === "custom";
   const extras = editing
     ? []
     : [
@@ -471,60 +488,72 @@ async function promptCarName(env, chatId, wizard, { editing, custom } = {}) {
           { text: "Kia Optima Hybrid", callback_data: "wiz:pick:Kia Optima Hybrid" },
         ],
       ];
-  const title = custom ? "🔎 <b>Custom search</b> (not saved)" : editing ? "✏️ Edit car" : "➕ Add car";
+  const step = isCustom ? "3/7" : "1/6";
+  const header = isCustom
+    ? "🔎 <b>Custom search</b> (not saved)"
+    : editing
+      ? "✏️ Edit car"
+      : "➕ Add car";
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
-      `${title}\n${CANADA_NOTE}\n\n` +
-      "🚗 <b>Step 1/6 — Car</b>\n" +
+      `${header}\n${CANADA_NOTE}\n\n` +
+      `🚗 <b>Step ${step} — Car name</b>\n` +
       (editing
         ? `Current: <code>${escapeHtml(draft.name || "")}</code>\nType new name or Keep.`
-        : "Tap an example or type a name (e.g. <code>Honda Civic</code>)."),
+        : "Type in <b>English</b> (e.g. <code>Mazda 3</code>) or tap an example."),
     parse_mode: "HTML",
     reply_markup: wizardKeyboard({
       keepLabel: editing && draft.name ? `✅ Keep “${draft.name}”` : null,
       keepData: editing && draft.name ? "wiz:keep" : null,
       extras,
+      custom: isCustom,
     }),
   });
 }
 
 async function promptCarQuery(env, chatId, wizard) {
   const draft = wizard.draft || {};
+  const isCustom = wizard?.mode === "custom";
   const suggestion = (draft.query || draft.name || "").toLowerCase();
+  const step = isCustom ? "4/7" : "2/6";
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
-      "🔎 <b>Step 2/6 — Facebook search text</b>\n" +
-      "Same as typing into Marketplace.\n" +
+      `🔎 <b>Step ${step} — Facebook search text</b>\n` +
+      "Type in <b>English</b> — same as the Marketplace search box.\n" +
       `Suggested: <code>${escapeHtml(suggestion)}</code>`,
     parse_mode: "HTML",
     reply_markup: wizardKeyboard({
       keepLabel: suggestion ? `✅ Use “${suggestion}”` : null,
       keepData: suggestion ? "wiz:keep" : null,
+      custom: isCustom,
     }),
   });
 }
 
 async function promptCarYears(env, chatId, wizard) {
   const d = wizard.draft || {};
+  const isCustom = wizard?.mode === "custom";
   const has = d.min_year != null ? `${d.min_year}-${d.max_year}` : "";
+  const step = isCustom ? "5/7" : "3/6";
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
-      "📅 <b>Step 3/6 — Years</b>\nType <code>2010-2014</code> or tap:" +
+      `📅 <b>Step ${step} — Year range</b>\nType <code>2005-2015</code> or tap:` +
       (has ? `\nCurrent: <code>${has}</code>` : ""),
     parse_mode: "HTML",
     reply_markup: wizardKeyboard({
       keepLabel: has ? `✅ Keep ${has}` : null,
       keepData: has ? "wiz:keep" : null,
+      custom: isCustom,
       extras: [
         [
+          { text: "2005–2015", callback_data: "wiz:years:2005-2015" },
           { text: "2010–2014", callback_data: "wiz:years:2010-2014" },
-          { text: "2011–2017", callback_data: "wiz:years:2011-2017" },
         ],
         [
-          { text: "2012–2018", callback_data: "wiz:years:2012-2018" },
+          { text: "2011–2017", callback_data: "wiz:years:2011-2017" },
           { text: "2015–2020", callback_data: "wiz:years:2015-2020" },
         ],
       ],
@@ -534,16 +563,19 @@ async function promptCarYears(env, chatId, wizard) {
 
 async function promptCarPrice(env, chatId, wizard) {
   const d = wizard.draft || {};
+  const isCustom = wizard?.mode === "custom";
   const has = d.min_price != null ? `${d.min_price}-${d.max_price}` : "";
+  const step = isCustom ? "6/7" : "4/6";
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
-      "💰 <b>Step 4/6 — Price (CAD)</b>\nType <code>300-2300</code> or tap:" +
+      `💰 <b>Step ${step} — Price range (CAD)</b>\nType <code>300-2300</code> or tap:` +
       (has ? `\nCurrent: <code>$${has}</code>` : ""),
     parse_mode: "HTML",
     reply_markup: wizardKeyboard({
       keepLabel: has ? `✅ Keep $${has}` : null,
       keepData: has ? "wiz:keep" : null,
+      custom: isCustom,
       extras: [
         [
           { text: "$300–2300", callback_data: "wiz:price:300-2300" },
@@ -560,15 +592,17 @@ async function promptCarPrice(env, chatId, wizard) {
 
 async function promptCarMileage(env, chatId, wizard) {
   const d = wizard.draft || {};
+  const isCustom = wizard?.mode === "custom";
   const cur = d.max_mileage_km ?? 250000;
+  const step = isCustom ? "7/7" : "5/6";
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
-      "⏱ <b>Step 5/6 — Max mileage for THIS car</b>\n" +
-      `Current / default: <b>${Number(cur).toLocaleString()} km</b>\n` +
-      "Each car has its own max km.",
+      `⏱ <b>Step ${step} — Max mileage (km)</b>\n` +
+      `Default: <b>${Number(cur).toLocaleString()} km</b>\n` +
+      "Tap a limit or type a custom km value.",
     parse_mode: "HTML",
-    reply_markup: mileageCarKeyboard(),
+    reply_markup: mileageCarKeyboard({ custom: isCustom }),
   });
 }
 
@@ -642,10 +676,31 @@ async function advanceCarWizard(env, chatId, wizard) {
   if (wizard.step === "car_mileage") {
     if (draft.max_mileage_km == null) draft.max_mileage_km = 250000;
     wizard.draft = draft;
+    if (wizard.mode === "custom") {
+      await finishCustomSearch(env, chatId, wizard);
+      return;
+    }
     wizard.step = "car_hybrid";
     await setWizard(env, chatId, wizard);
     await promptCarHybrid(env, chatId);
   }
+}
+
+async function finishCustomSearch(env, chatId, wizard) {
+  const area = wizard.customArea;
+  if (!area?.slug) {
+    await tg(env, "sendMessage", {
+      chat_id: chatId,
+      text: "❌ Custom search missing location. Start again with /customsearch.",
+    });
+    await setWizard(env, chatId, null);
+    return;
+  }
+  const search = buildSearchFromWizard({
+    ...(wizard.draft || {}),
+    hybrid: !!(wizard.draft && wizard.draft.hybrid),
+  });
+  await runCustomJob(env, chatId, search, [area]);
 }
 
 async function finishCarSave(env, chatId, wizard, hybrid) {
@@ -654,28 +709,9 @@ async function finishCarSave(env, chatId, wizard, hybrid) {
   const search = buildSearchFromWizard(wizard.draft);
 
   if (wizard.mode === "custom") {
-    // One-off: need location next (or use saved areas)
-    wizard.step = "custom_area";
     wizard.draft = { ...wizard.draft, hybrid };
-    wizard.search = search;
     await setWizard(env, chatId, wizard);
-    await tg(env, "sendMessage", {
-      chat_id: chatId,
-      text:
-        "📍 <b>Custom search location</b>\n" +
-        CANADA_NOTE +
-        "\n\nUse your saved locations, or pick a different city:",
-      parse_mode: "HTML",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "✅ Use saved locations", callback_data: "custom:usesaved" }],
-          [{ text: "➕ Pick another city", callback_data: "custom:pickcity" }],
-          [
-            { text: "❌ Cancel", callback_data: "wiz:cancel" },
-          ],
-        ],
-      },
-    });
+    await finishCustomSearch(env, chatId, wizard);
     return;
   }
 
@@ -1052,7 +1088,7 @@ async function handleCallback(env, cq) {
         chat_id: chatId,
         text: "Type max km for this car.\nExample: <code>250000</code>",
         parse_mode: "HTML",
-        reply_markup: wizardKeyboard(),
+        reply_markup: wizardKeyboard({ custom: wizard.mode === "custom" }),
       });
       return;
     }
@@ -1176,19 +1212,24 @@ async function handleCallback(env, cq) {
   }
 
   if (data.startsWith("customlocpage:")) {
+    if (wizard.mode !== "custom") return;
     const page = Number(data.split(":")[1]) || 0;
     wizard.page = page;
     await setWizard(env, chatId, wizard);
     await tg(env, "editMessageText", {
       chat_id: chatId,
       message_id: cq.message.message_id,
-      text: "📍 Pick city:",
+      text:
+        `🔎 <b>Custom search</b> (not saved)\n${CANADA_NOTE}\n\n` +
+        "📍 <b>Step 1/7 — Location</b>\nPick a Canadian city:",
+      parse_mode: "HTML",
       reply_markup: cityPickerKeyboard(page, "customloc"),
     });
     return;
   }
 
   if (data.startsWith("customloc:")) {
+    if (wizard.mode !== "custom") return;
     const slug = data.slice("customloc:".length);
     const city = CANADA_CITIES.find((c) => c.slug === slug);
     if (!city) return;
@@ -1198,7 +1239,10 @@ async function handleCallback(env, cq) {
     await tg(env, "editMessageText", {
       chat_id: chatId,
       message_id: cq.message.message_id,
-      text: `📍 ${escapeHtml(city.label)} — radius for this custom search:`,
+      text:
+        `🔎 <b>Custom search</b> (not saved)\n${CANADA_NOTE}\n\n` +
+        `📍 <b>Step 2/7 — Radius</b>\n` +
+        `City: <b>${escapeHtml(city.label)}</b>\nPick search radius:`,
       parse_mode: "HTML",
       reply_markup: radiusKeyboard("customrad"),
     });
@@ -1206,12 +1250,27 @@ async function handleCallback(env, cq) {
   }
 
   if (data.startsWith("customrad:")) {
+    if (wizard.mode !== "custom") return;
     const km = Number(data.split(":")[1]);
     const city = wizard.pendingCity;
-    if (!city || !wizard.search || !Number.isFinite(km)) return;
-    await runCustomJob(env, chatId, wizard.search, [
-      { slug: city.slug, label: city.label, radius_km: km },
-    ]);
+    if (!city || !Number.isFinite(km)) return;
+    wizard.customArea = {
+      slug: city.slug,
+      label: city.label,
+      radius_km: km,
+    };
+    wizard.step = "car_name";
+    wizard.draft = wizard.draft || { max_mileage_km: 250000 };
+    await setWizard(env, chatId, wizard);
+    await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cq.message.message_id,
+      text:
+        `✅ Location set: <b>${escapeHtml(city.label)}</b> · ${km} km\n` +
+        "Next: car details (one-time, not saved).",
+      parse_mode: "HTML",
+    });
+    await promptCarName(env, chatId, wizard, { custom: true });
   }
 }
 
@@ -1353,22 +1412,26 @@ async function handleScan(env, chatId) {
 async function startCustomSearch(env, chatId) {
   const w = {
     mode: "custom",
-    step: "car_name",
+    step: "custom_pick",
     draft: { max_mileage_km: 250000 },
+    page: 0,
     index: -1,
   };
   await setWizard(env, chatId, w);
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
-      "🔎 <b>Custom search</b>\n" +
+      "🔎 <b>Custom search</b> (one-time, not saved)\n" +
       CANADA_NOTE +
-      "\n\nOne-time run — <b>not</b> saved to /settings.\n" +
-      "You will pick a location + radius at the end (required).\n" +
-      "Cancel anytime with ❌ or /cancel.",
+      "\n\nAnswer <b>one step at a time</b>:\n" +
+      "1) Location → 2) Radius → 3) Car name → 4) Search text →\n" +
+      "5) Years → 6) Price → 7) Max mileage → run once\n\n" +
+      "📍 <b>Step 1/7 — Location</b>\n" +
+      "Pick a Canadian city below.\n" +
+      "Text inputs use <b>English</b>. Cancel anytime with /cancel.",
     parse_mode: "HTML",
+    reply_markup: cityPickerKeyboard(0, "customloc"),
   });
-  await promptCarName(env, chatId, w, { custom: true });
 }
 
 async function scheduledScan(env, { source = "timer" } = {}) {
@@ -1508,7 +1571,7 @@ export default {
             "🇨🇦 <b>Canada Marketplace car alerts</b>\n\n" +
             "/scan — run saved filters\n" +
             "/settings — shared cars, km, locations+radius\n" +
-            "/customsearch — one-off search (not saved)\n" +
+            "/customsearch — one-off: city, radius, car, years, price, km\n" +
             "/cancel — abort wizard\n" +
             "/id — chat id\n\n" +
             CANADA_NOTE,
