@@ -23,7 +23,8 @@ jobs:
     timeout-minutes: 45
     defaults:
       run:
-        shell: bash
+        # Full path: Windows self-hosted runners often lack bash on PATH.
+        shell: 'C:/Program Files/Git/bin/bash.exe' --noprofile --norc -eo pipefail {0}
 
     steps:
       - uses: actions/checkout@v4
