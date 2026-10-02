@@ -424,6 +424,14 @@ function buildSearchFromWizard(draft) {
   const qLower = query.toLowerCase();
   const name = (draft.name || query).trim();
   const hybrid = !!draft.hybrid;
+  const compact = qLower.replace(/\s+/g, "");
+  const words = qLower.split(/\s+/).filter(Boolean);
+  // Require the full phrase (or compact form). For multi-word queries also
+  // require every word so "kia forte" does not match "kia sorento".
+  const must_include_any = [qLower, compact].filter(
+    (v, i, arr) => v && arr.indexOf(v) === i
+  );
+  const must_include_all = words.length > 1 ? words : [];
   const searches = {
     name,
     query: qLower,
@@ -433,8 +441,8 @@ function buildSearchFromWizard(draft) {
     min_price: draft.min_price ?? 0,
     max_price: draft.max_price ?? 999999,
     max_mileage_km: draft.max_mileage_km ?? 250000,
-    must_include_any: qLower.split(/\s+/).filter(Boolean).slice(0, 3),
-    must_include_all: [],
+    must_include_any,
+    must_include_all,
     powertrain_any: hybrid
       ? ["hybrid", "hev", "phev", "plug-in", "plugin", "plug in"]
       : [],
@@ -442,7 +450,6 @@ function buildSearchFromWizard(draft) {
     require_body_style: false,
     require_mileage: false,
   };
-  const compact = qLower.replace(/\s+/g, "");
   if (compact && !searches.queries.includes(compact)) searches.queries.push(compact);
   if (!searches.must_include_any.length) searches.must_include_any = [qLower];
   return searches;
@@ -783,8 +790,8 @@ async function runCustomJob(env, chatId, search, market_areas) {
     searches: [search],
     scraper: {
       ...base.scraper,
-      // Custom: fewer hubs — only vehicles mode for speed
-      url_modes: ["vehicles"],
+      // Same modes as auto-scan: URL query params (no typing into FB search box)
+      url_modes: ["vehicles", "search"],
       search_mode_locations: market_areas.map((a) => a.slug),
       max_scrolls: 6,
     },

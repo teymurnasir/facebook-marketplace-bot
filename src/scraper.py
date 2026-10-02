@@ -412,6 +412,25 @@ def _extract_listings_from_dom(page: Page, search_name: str) -> list[Listing]:
     return list(found.values())
 
 
+def _query_tokens_match(hay: str, query: str) -> bool:
+    """
+    Multi-word queries must match as a phrase/compact form, or include every
+    significant token (len>=3). Prevents "kia forte" matching "kia sorento".
+    """
+    q = (query or "").strip().lower()
+    if not q:
+        return True
+    low = hay.lower()
+    compact_hay = _normalize_alnum(hay)
+    compact_q = _normalize_alnum(q)
+    if q in low or (compact_q and compact_q in compact_hay):
+        return True
+    words = [w for w in re.split(r"\s+", q) if len(w) >= 3]
+    if len(words) >= 2:
+        return _text_matches_all(hay, words)
+    return True
+
+
 def matches_filters(
     listing: Listing,
     search: SearchConfig,
@@ -423,6 +442,10 @@ def matches_filters(
         return False
 
     if search.must_include_all and not _text_matches_all(hay, search.must_include_all):
+        return False
+
+    # Always enforce the primary query tokens (custom search safety net).
+    if not _query_tokens_match(hay, search.query):
         return False
 
     if search.powertrain_any and not _text_matches_any(hay, search.powertrain_any):
