@@ -23,8 +23,11 @@ function Write-Log([string]$Message) {
 Write-Log "Starting local marketplace scanner"
 
 while ($true) {
-    $ErrorActionPreference = "Continue"
-    $p = Start-Process -FilePath $Python -ArgumentList "main.py" -WorkingDirectory $Root -PassThru -Wait -NoNewWindow -RedirectStandardOutput $LogFile -RedirectStandardError (Join-Path $LogDir "local-scanner.err.log")
-    Write-Log ("Scanner exited with code {0} - restarting in 30s" -f $p.ExitCode)
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $outLog = Join-Path $LogDir ("scanner-" + $stamp + ".out.log")
+    $errLog = Join-Path $LogDir ("scanner-" + $stamp + ".err.log")
+    Write-Log ("Launching main.py (out=" + $outLog + ")")
+    $p = Start-Process -FilePath $Python -ArgumentList "main.py" -WorkingDirectory $Root -PassThru -Wait -WindowStyle Hidden -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+    Write-Log ("Scanner exited with code " + $p.ExitCode + " - restarting in 30s")
     Start-Sleep -Seconds 30
 }
