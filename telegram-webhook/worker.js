@@ -477,6 +477,22 @@ async function cancelWizard(env, chatId, { editMessageId } = {}) {
   }
 }
 
+/** In Telegram groups with privacy mode, plain text is ignored unless it is a reply to the bot. */
+async function askTypedAnswer(env, chatId, placeholder) {
+  await tg(env, "sendMessage", {
+    chat_id: chatId,
+    text:
+      "⬇️ <b>Reply to this message</b> with your answer.\n" +
+      "(Required in groups — normal chat messages are invisible to the bot.)",
+    parse_mode: "HTML",
+    reply_markup: {
+      force_reply: true,
+      selective: true,
+      input_field_placeholder: placeholder || "Type here…",
+    },
+  });
+}
+
 async function promptCarName(env, chatId, wizard, { editing, custom } = {}) {
   const draft = wizard.draft || {};
   const isCustom = custom || wizard?.mode === "custom";
@@ -510,6 +526,9 @@ async function promptCarName(env, chatId, wizard, { editing, custom } = {}) {
       custom: isCustom,
     }),
   });
+  if (isCustom && !editing) {
+    await askTypedAnswer(env, chatId, "e.g. Kia Forte");
+  }
 }
 
 async function promptCarQuery(env, chatId, wizard) {
@@ -530,6 +549,9 @@ async function promptCarQuery(env, chatId, wizard) {
       custom: isCustom,
     }),
   });
+  if (isCustom) {
+    await askTypedAnswer(env, chatId, suggestion || "e.g. kia forte");
+  }
 }
 
 async function promptCarYears(env, chatId, wizard) {
@@ -559,6 +581,9 @@ async function promptCarYears(env, chatId, wizard) {
       ],
     }),
   });
+  if (isCustom) {
+    await askTypedAnswer(env, chatId, "e.g. 2014-2018");
+  }
 }
 
 async function promptCarPrice(env, chatId, wizard) {
@@ -588,6 +613,9 @@ async function promptCarPrice(env, chatId, wizard) {
       ],
     }),
   });
+  if (isCustom) {
+    await askTypedAnswer(env, chatId, "e.g. 1000-5000");
+  }
 }
 
 async function promptCarMileage(env, chatId, wizard) {
@@ -600,7 +628,7 @@ async function promptCarMileage(env, chatId, wizard) {
     text:
       `⏱ <b>Step ${step} — Max mileage (km)</b>\n` +
       `Default: <b>${Number(cur).toLocaleString()} km</b>\n` +
-      "Tap a limit or type a custom km value.",
+      "Tap a limit, or use “Type custom km”.",
     parse_mode: "HTML",
     reply_markup: mileageCarKeyboard({ custom: isCustom }),
   });
@@ -1114,6 +1142,9 @@ async function handleCallback(env, cq) {
         parse_mode: "HTML",
         reply_markup: wizardKeyboard({ custom: wizard.mode === "custom" }),
       });
+      if (wizard.mode === "custom") {
+        await askTypedAnswer(env, chatId, "e.g. 250000");
+      }
       return;
     }
     const km = Number(data.split(":")[1]);
