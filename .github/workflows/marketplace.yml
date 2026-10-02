@@ -28,14 +28,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      # Self-hosted Windows: use the machine Python (setup-python needs admin registry access).
+      - name: Verify Python
+        run: |
+          python --version
+          python -c "import sys; assert sys.version_info[:2] >= (3, 12), sys.version"
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          playwright install chromium
+          python -m pip install -r requirements.txt
+          python -m playwright install chromium
 
       - name: Load live Telegram settings or custom job
         env:
