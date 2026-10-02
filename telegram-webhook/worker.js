@@ -688,17 +688,30 @@ async function advanceCarWizard(env, chatId, wizard) {
 
 async function finishCustomSearch(env, chatId, wizard) {
   const area = wizard.customArea;
-  if (!area?.slug) {
+  const d = wizard.draft || {};
+  const missing = [];
+  if (!area?.slug) missing.push("location/radius");
+  if (!d.name) missing.push("car name");
+  if (!d.query && !d.name) missing.push("search text");
+  if (d.min_year == null || d.max_year == null) missing.push("year range");
+  if (d.min_price == null || d.max_price == null) missing.push("price range");
+  if (d.max_mileage_km == null) missing.push("max mileage");
+  if (missing.length) {
     await tg(env, "sendMessage", {
       chat_id: chatId,
-      text: "❌ Custom search missing location. Start again with /customsearch.",
+      text:
+        "⏳ Custom search is <b>not ready yet</b>.\n" +
+        `Still need: <b>${missing.join(", ")}</b>\n\n` +
+        "Continue the steps in Telegram, or /cancel and start again with /customsearch.",
+      parse_mode: "HTML",
+      reply_markup: wizardKeyboard({ custom: true }),
     });
-    await setWizard(env, chatId, null);
     return;
   }
   const search = buildSearchFromWizard({
-    ...(wizard.draft || {}),
-    hybrid: !!(wizard.draft && wizard.draft.hybrid),
+    ...d,
+    query: d.query || d.name,
+    hybrid: !!d.hybrid,
   });
   await runCustomJob(env, chatId, search, [area]);
 }
@@ -755,7 +768,7 @@ async function runCustomJob(env, chatId, search, market_areas) {
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
-      "🔎 <b>Custom search starting</b> (not saved to settings)\n" +
+      "🔎 <b>Custom search ready</b> (not saved to /settings)\n" +
       CANADA_NOTE +
       `\n\n🚗 ${escapeHtml(search.name)}` +
       `\n🔎 <code>${escapeHtml(search.query)}</code>` +
@@ -763,14 +776,18 @@ async function runCustomJob(env, chatId, search, market_areas) {
       `\n💰 $${search.min_price}–$${search.max_price}` +
       `\n⏱ max ${(search.max_mileage_km || 250000).toLocaleString()} km` +
       `\n📍 ${market_areas.map((a) => `${a.label} (${a.radius_km} km)`).join(", ")}` +
-      "\n\n⏳ Queued for your home PC…",
+      "\n\n⏳ Queuing on your home PC…",
     parse_mode: "HTML",
   });
   try {
     await dispatchScan(env, jobId);
     await tg(env, "sendMessage", {
       chat_id: chatId,
-      text: "🚀 Custom search queued. Results will appear here shortly.",
+      text:
+        "🚀 <b>Custom search queued</b>\n" +
+        "Your PC will start it within about 30 seconds.\n" +
+        "You will get another message when it actually starts.",
+      parse_mode: "HTML",
     });
   } catch (err) {
     await tg(env, "sendMessage", {
@@ -1053,6 +1070,13 @@ async function handleCallback(env, cq) {
     wizard.draft.name = name;
     wizard.draft.query = name.toLowerCase();
     await setWizard(env, chatId, wizard);
+    if (wizard.mode === "custom") {
+      await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: `✅ Car name saved: <b>${escapeHtml(name)}</b>`,
+        parse_mode: "HTML",
+      });
+    }
     await advanceCarWizard(env, chatId, wizard);
     return;
   }
@@ -1306,16 +1330,49 @@ async function handleWizardText(env, chatId, text) {
   }
 
   if (wizard.step === "car_name") {
-    draft.name = trimmed === "." ? draft.name : trimmed;
+    if (!trimmed || trimmed === ".") {
+      await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: "❌ Please type a car name in English.\nExample: <code>Mazda 3</code>",
+        parse_mode: "HTML",
+        reply_markup: wizardKeyboard({ custom: wizard.mode === "custom" }),
+      });
+      return true;
+    }
+    draft.name = trimmed;
+    if (!draft.query) draft.query = trimmed.toLowerCase();
     wizard.draft = draft;
     await setWizard(env, chatId, wizard);
+    if (wizard.mode === "custom") {
+      await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: `✅ Car name saved: <b>${escapeHtml(draft.name)}</b>`,
+        parse_mode: "HTML",
+      });
+    }
     await advanceCarWizard(env, chatId, wizard);
     return true;
   }
   if (wizard.step === "car_query") {
     draft.query = trimmed === "." ? draft.name : trimmed;
+    if (!draft.query) {
+      await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: "❌ Please type the Marketplace search text in English.\nExample: <code>mazda 3</code>",
+        parse_mode: "HTML",
+        reply_markup: wizardKeyboard({ custom: wizard.mode === "custom" }),
+      });
+      return true;
+    }
     wizard.draft = draft;
     await setWizard(env, chatId, wizard);
+    if (wizard.mode === "custom") {
+      await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: `✅ Search text saved: <code>${escapeHtml(draft.query)}</code>`,
+        parse_mode: "HTML",
+      });
+    }
     await advanceCarWizard(env, chatId, wizard);
     return true;
   }

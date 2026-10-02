@@ -101,7 +101,12 @@ def run_once(
 
     logger.info("Cycle done: %d scraped, %d new", len(listings), new_count)
     if notify and telegram is not None and env_bool("TELEGRAM_SCAN_SUMMARY", True):
-        prefix = "🔎 Custom search" if ignore_seen else "✅ Scan"
+        if ignore_seen:
+            prefix = "🔎 Custom search"
+        elif env_bool("MANUAL_SCAN", False):
+            prefix = "✅ Manual /scan"
+        else:
+            prefix = "✅ Auto scan"
         if new_count:
             telegram.send_text(
                 f"{prefix} finished — <b>{new_count}</b> listing(s) sent above."
@@ -155,6 +160,10 @@ def _prepare_cycle(root: Path) -> tuple[dict, int, bool, dict | None]:
             logger.exception("Failed to sync Telegram /settings; using local config.yaml")
 
     os.environ["CUSTOM_SEARCH"] = "1" if custom else "0"
+    # MANUAL_SCAN = Telegram /scan (pending without job_id), not the quiet auto timer.
+    os.environ["MANUAL_SCAN"] = (
+        "1" if (pending_payload is not None and not custom) else "0"
+    )
     cfg = load_config(config_path)
     return cfg, interval, custom, pending_payload
 
@@ -242,11 +251,17 @@ def main() -> int:
             cfg, interval, custom, pending_payload = _prepare_cycle(root)
             scraper.timeout_ms = cfg["scraper"]["timeout_ms"]
 
-            if telegram and (once or custom) and not seed:
-                telegram.send_text(
-                    "🚀 Marketplace scan is running now…\n"
-                    "Please wait — results will arrive in this chat."
-                )
+            if telegram and not seed:
+                if custom:
+                    telegram.send_text(
+                        "🚀 <b>Custom search started</b> on your PC…\n"
+                        "Please wait — results will arrive in this chat."
+                    )
+                elif once or env_bool("MANUAL_SCAN", False):
+                    telegram.send_text(
+                        "🚀 <b>Manual /scan started</b> on your PC…\n"
+                        "Please wait — results will arrive in this chat."
+                    )
             if pending_payload is not None:
                 try:
                     ack_pending_scan(pending_payload.get("requested_at"))
