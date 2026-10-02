@@ -7,7 +7,7 @@ import time
 from typing import Any
 from urllib.parse import urlencode
 
-from playwright.sync_api import Browser, Page, Playwright, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_playwright
 
 from .models import Listing, SearchConfig
 
@@ -24,6 +24,19 @@ MILEAGE_RE = re.compile(
 
 # Facebook Marketplace URL `radius` is in miles. Map user km → nearest FB mile option.
 _FB_RADIUS_MILES = (1, 2, 5, 10, 20, 40, 60, 80, 100, 250, 500)
+
+
+class FacebookSessionError(RuntimeError):
+    """Raised when Facebook redirects the browser to login/checkpoint pages."""
+
+
+def _desktop_chrome_user_agent(chrome_version: str) -> str:
+    version = (chrome_version or "120.0.0.0").split()[0]
+    return (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        f"Chrome/{version} Safari/537.36"
+    )
 
 
 def km_to_facebook_radius_miles(radius_km: int | float | None) -> int:
@@ -475,8 +488,9 @@ class MarketplaceScraper:
         if not areas:
             areas = [{"slug": slug, "radius_km": 65} for slug in locations]
 
+        session_healthy = True
         with sync_playwright() as p:
-            browser, page = self._launch(p)
+            browser, context, page = self._launch(p)
             try:
                 for search in searches:
                     for query in search.all_queries():
@@ -514,6 +528,9 @@ class MarketplaceScraper:
                                 )
                                 try:
                                     batch = self._scrape_url(page, url, search, max_scrolls)
+                                except FacebookSessionError:
+                                    session_healthy = False
+                                    raise
                                 except Exception:
                                     logger.exception(
                                         "Scrape failed for %s / %s / %s",
@@ -557,21 +574,19 @@ class MarketplaceScraper:
 
                                 time.sleep(delay_between_searches_sec)
             finally:
+                if session_healthy:
+                    self._save_storage_state(context)
                 browser.close()
 
         return list(results.values())
 
-    def _launch(self, p: Playwright) -> tuple[Browser, Page]:
+    def _launch(self, p: Playwright) -> tuple[Browser, BrowserContext, Page]:
         browser = p.chromium.launch(headless=self.headless)
         context_kwargs: dict[str, Any] = {
             "viewport": {"width": 1280, "height": 900},
             "locale": "en-CA",
             "timezone_id": "America/Toronto",
-            "user_agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
+            "user_agent": _desktop_chrome_user_agent(browser.version),
         }
         from pathlib import Path
 
@@ -586,7 +601,39 @@ class MarketplaceScraper:
         context = browser.new_context(**context_kwargs)
         page = context.new_page()
         page.set_default_timeout(self.timeout_ms)
-        return browser, page
+        return browser, context, page
+
+    def _save_storage_state(self, context: BrowserContext) -> None:
+        from pathlib import Path
+
+        path = Path(self.storage_state_path)
+        if not path:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            context.storage_state(path=str(path))
+            logger.info("Saved refreshed Facebook session → %s", path)
+        except Exception:
+            logger.exception("Could not save refreshed Facebook session state")
+
+    def _raise_if_session_problem(self, page: Page) -> None:
+        url = page.url.lower()
+        if "/login" in url or "/checkpoint" in url:
+            raise FacebookSessionError(
+                "Facebook session is no longer valid. "
+                "Refresh it with: python3 -m src.save_session"
+            )
+        try:
+            login_text = page.get_by_text("Log in to Facebook", exact=False)
+            if login_text.count() and login_text.first.is_visible(timeout=1000):
+                raise FacebookSessionError(
+                    "Facebook is showing the login page. "
+                    "Refresh the saved session with: python3 -m src.save_session"
+                )
+        except FacebookSessionError:
+            raise
+        except Exception:
+            pass
 
     def _scrape_url(
         self,
@@ -628,6 +675,7 @@ class MarketplaceScraper:
         try:
             page.goto(url, wait_until="domcontentloaded")
             page.wait_for_timeout(2500)
+            self._raise_if_session_problem(page)
 
             # Dismiss common cookie / login banners if present (best-effort)
             for label in ("Allow all cookies", "Decline optional cookies", "Close"):

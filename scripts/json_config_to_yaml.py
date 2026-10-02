@@ -32,6 +32,12 @@ def normalize(data: dict) -> dict:
         )
 
     locations = [a["slug"] for a in market_areas]
+    scraper = dict(data.get("scraper") or {})
+    search_mode_locations = list(scraper.get("search_mode_locations") or [])
+    if search_mode_locations and locations:
+        active = set(locations)
+        if not any(slug in active for slug in search_mode_locations):
+            scraper["search_mode_locations"] = [locations[0]]
 
     return {
         "country": data.get("country") or "CA",
@@ -41,7 +47,7 @@ def normalize(data: dict) -> dict:
         "locations": locations,
         "location_keywords": data.get("location_keywords") or [],
         "searches": searches,
-        "scraper": data.get("scraper") or {},
+        "scraper": scraper,
     }
 
 

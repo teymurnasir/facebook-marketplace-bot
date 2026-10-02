@@ -17,6 +17,15 @@ from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
 
+def _desktop_chrome_user_agent(chrome_version: str) -> str:
+    version = (chrome_version or "120.0.0.0").split()[0]
+    return (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        f"Chrome/{version} Safari/537.36"
+    )
+
+
 def main() -> None:
     load_dotenv()
     out = Path(os.getenv("FACEBOOK_STORAGE_STATE", "storage_state.json"))
@@ -32,6 +41,7 @@ def main() -> None:
             viewport={"width": 1280, "height": 900},
             locale="en-CA",
             timezone_id="America/Toronto",
+            user_agent=_desktop_chrome_user_agent(browser.version),
         )
         page = context.new_page()
         page.goto("https://www.facebook.com/login", wait_until="domcontentloaded")

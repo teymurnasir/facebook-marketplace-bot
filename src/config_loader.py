@@ -79,6 +79,11 @@ def load_config(path: str | Path = "config.yaml") -> dict[str, Any]:
         locations = [a["slug"] for a in market_areas]
     # Empty locations allowed in file; Telegram /scan blocks until user adds one
 
+    if search_mode_locations and locations:
+        active = set(locations)
+        if not any(slug in active for slug in search_mode_locations):
+            search_mode_locations = [locations[0]]
+
     return {
         "country": data.get("country") or "CA",
         "locations": locations,

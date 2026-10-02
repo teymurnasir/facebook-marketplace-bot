@@ -12,3 +12,4 @@ cookies.json
 playwright-report/
 storage_state.json
 telegram-webhook/.wrangler/
+.wrangler/

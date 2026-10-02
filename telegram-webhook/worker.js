@@ -130,6 +130,17 @@ function normalizeConfig(cfg) {
     max_mileage_km: s.max_mileage_km ?? out.max_mileage_km ?? 250000,
   }));
   if (!out.scraper) out.scraper = structuredClone(defaultConfig.scraper);
+  const activeLocations = new Set(out.locations || []);
+  const searchModeLocations = Array.isArray(out.scraper.search_mode_locations)
+    ? out.scraper.search_mode_locations
+    : [];
+  if (
+    searchModeLocations.length &&
+    activeLocations.size &&
+    !searchModeLocations.some((slug) => activeLocations.has(slug))
+  ) {
+    out.scraper.search_mode_locations = [out.locations[0]];
+  }
   return out;
 }
 
