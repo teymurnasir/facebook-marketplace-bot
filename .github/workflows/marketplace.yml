@@ -32,7 +32,7 @@ jobs:
       - name: Verify Python
         run: |
           python --version
-          python -c "import sys; assert sys.version_info[:2] >= (3, 12), sys.version"
+          python -c "import sys; assert sys.version_info[:2] >= (3, 11), sys.version"
 
       - name: Install dependencies
         run: |
