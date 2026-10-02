@@ -1,4 +1,4 @@
-# Runs every 30 minutes in the cloud (no laptop needed).
+# Runs on the dedicated self-hosted Windows runner (home IP / stable browser).
 # Repo must be PRIVATE — it uses your Facebook session secret.
 
 name: Marketplace scan
@@ -23,8 +23,7 @@ jobs:
     timeout-minutes: 45
     defaults:
       run:
-        # Full path: Windows self-hosted runners often lack bash on PATH.
-        shell: '"C:/Program Files/Git/bin/bash.exe" --noprofile --norc -eo pipefail {0}'
+        shell: pwsh
 
     steps:
       - uses: actions/checkout@v4
@@ -46,28 +45,22 @@ jobs:
           SETTINGS_CONFIG_TOKEN: ${{ secrets.SETTINGS_CONFIG_TOKEN }}
           JOB_ID: ${{ github.event.inputs.job_id }}
         run: |
-          set -euo pipefail
-          if [ -n "${JOB_ID:-}" ] && [ -n "${SETTINGS_CONFIG_URL:-}" ] && [ -n "${SETTINGS_CONFIG_TOKEN:-}" ]; then
-            BASE="${SETTINGS_CONFIG_URL%/config}"
-            curl -fsS \
-              -H "Authorization: Bearer ${SETTINGS_CONFIG_TOKEN}" \
-              "${BASE}/job/${JOB_ID}" \
-              -o /tmp/live-config.json
-            echo "CUSTOM_SEARCH=1" >> "$GITHUB_ENV"
-            echo "Loaded custom job ${JOB_ID}"
-          elif [ -n "${SETTINGS_CONFIG_URL:-}" ] && [ -n "${SETTINGS_CONFIG_TOKEN:-}" ]; then
-            curl -fsS \
-              -H "Authorization: Bearer ${SETTINGS_CONFIG_TOKEN}" \
-              "$SETTINGS_CONFIG_URL" \
-              -o /tmp/live-config.json
-            echo "Loaded shared /settings config"
-          else
-            echo "No live settings secrets — using repo config.yaml"
+          $ErrorActionPreference = "Stop"
+          if ($env:JOB_ID -and $env:SETTINGS_CONFIG_URL -and $env:SETTINGS_CONFIG_TOKEN) {
+            $base = $env:SETTINGS_CONFIG_URL -replace '/config$', ''
+            Invoke-WebRequest -Uri "$base/job/$($env:JOB_ID)" -Headers @{ Authorization = "Bearer $($env:SETTINGS_CONFIG_TOKEN)" } -OutFile "$env:RUNNER_TEMP\live-config.json"
+            "CUSTOM_SEARCH=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            Write-Host "Loaded custom job $($env:JOB_ID)"
+          } elseif ($env:SETTINGS_CONFIG_URL -and $env:SETTINGS_CONFIG_TOKEN) {
+            Invoke-WebRequest -Uri $env:SETTINGS_CONFIG_URL -Headers @{ Authorization = "Bearer $($env:SETTINGS_CONFIG_TOKEN)" } -OutFile "$env:RUNNER_TEMP\live-config.json"
+            Write-Host "Loaded shared /settings config"
+          } else {
+            Write-Host "No live settings secrets — using repo config.yaml"
             exit 0
-          fi
-          python scripts/json_config_to_yaml.py /tmp/live-config.json config.yaml
-          echo "---- config.yaml (head) ----"
-          head -n 80 config.yaml
+          }
+          python scripts/json_config_to_yaml.py "$env:RUNNER_TEMP\live-config.json" config.yaml
+          Write-Host "---- config.yaml (head) ----"
+          Get-Content config.yaml -TotalCount 80
 
       - name: Restore refreshed Facebook session cache
         uses: actions/cache/restore@v4
@@ -81,16 +74,17 @@ jobs:
         env:
           FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
         run: |
-          if [ -s storage_state.json ]; then
-            echo "Using cached refreshed Facebook session"
-          else
-            if [ -z "$FACEBOOK_STORAGE_STATE_B64" ]; then
-              echo "Missing secret FACEBOOK_STORAGE_STATE_B64"
+          $ErrorActionPreference = "Stop"
+          if ((Test-Path storage_state.json) -and ((Get-Item storage_state.json).Length -gt 0)) {
+            Write-Host "Using cached refreshed Facebook session"
+          } else {
+            if (-not $env:FACEBOOK_STORAGE_STATE_B64) {
+              Write-Error "Missing secret FACEBOOK_STORAGE_STATE_B64"
               exit 1
-            fi
-            echo "$FACEBOOK_STORAGE_STATE_B64" | base64 --decode > storage_state.json
-            echo "Restored Facebook session from secret"
-          fi
+            }
+            [IO.File]::WriteAllBytes((Join-Path $pwd "storage_state.json"), [Convert]::FromBase64String($env:FACEBOOK_STORAGE_STATE_B64))
+            Write-Host "Restored Facebook session from secret"
+          }
           python -c "import json; d=json.load(open('storage_state.json')); assert any(c['name']=='c_user' for c in d.get('cookies',[]))"
 
       - name: Restore seen.db
@@ -105,12 +99,12 @@ jobs:
         env:
           SEEN_DB_B64: ${{ secrets.SEEN_DB_B64 }}
         run: |
-          mkdir -p data
-          if [ ! -f data/seen.db ] && [ -n "$SEEN_DB_B64" ]; then
-            echo "$SEEN_DB_B64" | base64 --decode > data/seen.db
-            echo "Seeded seen.db from secret"
-          fi
-          ls -la data || true
+          New-Item -ItemType Directory -Force -Path data | Out-Null
+          if (-not (Test-Path data/seen.db) -and $env:SEEN_DB_B64) {
+            [IO.File]::WriteAllBytes((Join-Path $pwd "data\seen.db"), [Convert]::FromBase64String($env:SEEN_DB_B64))
+            Write-Host "Seeded seen.db from secret"
+          }
+          Get-ChildItem data -ErrorAction SilentlyContinue | Format-Table Name, Length
 
       - name: Run one Marketplace scan
         env:
