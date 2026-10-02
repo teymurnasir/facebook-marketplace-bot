@@ -48,18 +48,18 @@ jobs:
           $ErrorActionPreference = "Stop"
           if ($env:JOB_ID -and $env:SETTINGS_CONFIG_URL -and $env:SETTINGS_CONFIG_TOKEN) {
             $base = $env:SETTINGS_CONFIG_URL -replace '/config$', ''
-            Invoke-WebRequest -Uri "$base/job/$($env:JOB_ID)" -Headers @{ Authorization = "Bearer $($env:SETTINGS_CONFIG_TOKEN)" } -OutFile "$env:RUNNER_TEMP\live-config.json"
+            Invoke-WebRequest -UseBasicParsing -Uri "$base/job/$($env:JOB_ID)" -Headers @{ Authorization = "Bearer $($env:SETTINGS_CONFIG_TOKEN)" } -OutFile "$env:RUNNER_TEMP\live-config.json"
             "CUSTOM_SEARCH=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
             Write-Host "Loaded custom job $($env:JOB_ID)"
           } elseif ($env:SETTINGS_CONFIG_URL -and $env:SETTINGS_CONFIG_TOKEN) {
-            Invoke-WebRequest -Uri $env:SETTINGS_CONFIG_URL -Headers @{ Authorization = "Bearer $($env:SETTINGS_CONFIG_TOKEN)" } -OutFile "$env:RUNNER_TEMP\live-config.json"
+            Invoke-WebRequest -UseBasicParsing -Uri $env:SETTINGS_CONFIG_URL -Headers @{ Authorization = "Bearer $($env:SETTINGS_CONFIG_TOKEN)" } -OutFile "$env:RUNNER_TEMP\live-config.json"
             Write-Host "Loaded shared /settings config"
           } else {
-            Write-Host "No live settings secrets — using repo config.yaml"
+            Write-Host "No live settings secrets - using repo config.yaml"
             exit 0
           }
           python scripts/json_config_to_yaml.py "$env:RUNNER_TEMP\live-config.json" config.yaml
-          Write-Host "---- config.yaml (head) ----"
+          Write-Host "config.yaml head:"
           Get-Content config.yaml -TotalCount 80
 
       - name: Restore refreshed Facebook session cache
