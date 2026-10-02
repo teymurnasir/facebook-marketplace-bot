@@ -24,7 +24,7 @@ jobs:
     defaults:
       run:
         # Full path: Windows self-hosted runners often lack bash on PATH.
-        shell: 'C:/Program Files/Git/bin/bash.exe' --noprofile --norc -eo pipefail {0}
+        shell: '"C:/Program Files/Git/bin/bash.exe" --noprofile --norc -eo pipefail {0}'
 
     steps:
       - uses: actions/checkout@v4
