@@ -77,9 +77,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: data/seen.db
-          key: seen-db-v2-${{ github.run_id }}
+          key: seen-db-v3-${{ github.run_id }}
           restore-keys: |
-            seen-db-v2-
+            seen-db-v3-
 
       - name: Ensure / seed seen.db
         env:
@@ -106,4 +106,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: data/seen.db
-          key: seen-db-v2-${{ github.run_id }}
+          key: seen-db-v3-${{ github.run_id }}
