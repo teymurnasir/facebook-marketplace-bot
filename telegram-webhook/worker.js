@@ -99,14 +99,14 @@ function escapeHtml(s) {
     .replaceAll(">", "&gt;");
 }
 
-const INTERVAL_OPTS = [15, 30, 45, 60, 90, 120]; // minutes (0 = auto off)
+const INTERVAL_OPTS = [30, 60, 90, 120, 180]; // minutes (0 = auto off)
 
 function normalizeConfig(cfg) {
   const out = structuredClone(cfg || defaultConfig);
   out.country = "CA";
   out.max_mileage_km = out.max_mileage_km || 250000;
   let interval = Number(out.poll_interval_minutes);
-  if (!Number.isFinite(interval)) interval = 30;
+  if (!Number.isFinite(interval)) interval = 180;
   if (interval < 0) interval = 0;
   if (interval > 0 && interval < 15) interval = 15; // minimum auto interval
   out.poll_interval_minutes = Math.round(interval);

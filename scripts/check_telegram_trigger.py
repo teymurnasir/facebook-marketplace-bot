@@ -123,7 +123,7 @@ def main() -> int:
                         "/scan — start a search now\n"
                         "/id — show this chat’s id\n"
                         "/help — this message\n\n"
-                        "Also runs automatically every 30 minutes.\n"
+                        "Also runs automatically on the configured safe interval.\n"
                         "Same cars are never sent twice."
                     ),
                 )

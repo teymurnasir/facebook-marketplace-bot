@@ -1,5 +1,4 @@
-# Emergency / manual only. Normal scans run on the always-on local PC scanner
-# (python main.py), not via GitHub Actions.
+# Runs in GitHub Actions cloud when Telegram /scan or the auto tick dispatches it.
 # Repo must be PRIVATE — it uses your Facebook session secret.
 
 name: Marketplace scan
@@ -20,25 +19,20 @@ concurrency:
 
 jobs:
   scan:
-    runs-on: [self-hosted, marketplace-bot]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
-    defaults:
-      run:
-        shell: powershell
 
     steps:
       - uses: actions/checkout@v4
 
-      # Self-hosted Windows: use the machine Python (setup-python needs admin registry access).
-      - name: Verify Python
-        run: |
-          python --version
-          python -c "import sys; assert sys.version_info[:2] >= (3, 11), sys.version"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
-          python -m pip install -r requirements.txt
-          python -m playwright install chromium
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
 
       - name: Load live Telegram settings or custom job
         env:
@@ -46,22 +40,28 @@ jobs:
           SETTINGS_CONFIG_TOKEN: ${{ secrets.SETTINGS_CONFIG_TOKEN }}
           JOB_ID: ${{ github.event.inputs.job_id }}
         run: |
-          $ErrorActionPreference = "Stop"
-          if ($env:JOB_ID -and $env:SETTINGS_CONFIG_URL -and $env:SETTINGS_CONFIG_TOKEN) {
-            $base = $env:SETTINGS_CONFIG_URL -replace '/config$', ''
-            Invoke-WebRequest -UseBasicParsing -Uri "$base/job/$($env:JOB_ID)" -Headers @{ Authorization = "Bearer $($env:SETTINGS_CONFIG_TOKEN)" } -OutFile "$env:RUNNER_TEMP\live-config.json"
-            "CUSTOM_SEARCH=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            Write-Host "Loaded custom job $($env:JOB_ID)"
-          } elseif ($env:SETTINGS_CONFIG_URL -and $env:SETTINGS_CONFIG_TOKEN) {
-            Invoke-WebRequest -UseBasicParsing -Uri $env:SETTINGS_CONFIG_URL -Headers @{ Authorization = "Bearer $($env:SETTINGS_CONFIG_TOKEN)" } -OutFile "$env:RUNNER_TEMP\live-config.json"
-            Write-Host "Loaded shared /settings config"
-          } else {
-            Write-Host "No live settings secrets - using repo config.yaml"
+          set -euo pipefail
+          if [ -n "${JOB_ID:-}" ] && [ -n "${SETTINGS_CONFIG_URL:-}" ] && [ -n "${SETTINGS_CONFIG_TOKEN:-}" ]; then
+            BASE="${SETTINGS_CONFIG_URL%/config}"
+            curl -fsS \
+              -H "Authorization: Bearer ${SETTINGS_CONFIG_TOKEN}" \
+              "${BASE}/job/${JOB_ID}" \
+              -o /tmp/live-config.json
+            echo "CUSTOM_SEARCH=1" >> "$GITHUB_ENV"
+            echo "Loaded custom job ${JOB_ID}"
+          elif [ -n "${SETTINGS_CONFIG_URL:-}" ] && [ -n "${SETTINGS_CONFIG_TOKEN:-}" ]; then
+            curl -fsS \
+              -H "Authorization: Bearer ${SETTINGS_CONFIG_TOKEN}" \
+              "$SETTINGS_CONFIG_URL" \
+              -o /tmp/live-config.json
+            echo "Loaded shared /settings config"
+          else
+            echo "No live settings secrets - using repo config.yaml"
             exit 0
-          }
-          python scripts/json_config_to_yaml.py "$env:RUNNER_TEMP\live-config.json" config.yaml
-          Write-Host "config.yaml head:"
-          Get-Content config.yaml -TotalCount 80
+          fi
+          python scripts/json_config_to_yaml.py /tmp/live-config.json config.yaml
+          echo "---- config.yaml (head) ----"
+          head -n 80 config.yaml
 
       - name: Restore refreshed Facebook session cache
         uses: actions/cache/restore@v4
@@ -75,17 +75,16 @@ jobs:
         env:
           FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
         run: |
-          $ErrorActionPreference = "Stop"
-          if ((Test-Path storage_state.json) -and ((Get-Item storage_state.json).Length -gt 0)) {
-            Write-Host "Using cached refreshed Facebook session"
-          } else {
-            if (-not $env:FACEBOOK_STORAGE_STATE_B64) {
-              Write-Error "Missing secret FACEBOOK_STORAGE_STATE_B64"
+          if [ -s storage_state.json ]; then
+            echo "Using cached refreshed Facebook session"
+          else
+            if [ -z "$FACEBOOK_STORAGE_STATE_B64" ]; then
+              echo "Missing secret FACEBOOK_STORAGE_STATE_B64"
               exit 1
-            }
-            [IO.File]::WriteAllBytes((Join-Path $pwd "storage_state.json"), [Convert]::FromBase64String($env:FACEBOOK_STORAGE_STATE_B64))
-            Write-Host "Restored Facebook session from secret"
-          }
+            fi
+            echo "$FACEBOOK_STORAGE_STATE_B64" | base64 --decode > storage_state.json
+            echo "Restored Facebook session from secret"
+          fi
           python -c "import json; d=json.load(open('storage_state.json')); assert any(c['name']=='c_user' for c in d.get('cookies',[]))"
 
       - name: Restore seen.db
@@ -100,12 +99,12 @@ jobs:
         env:
           SEEN_DB_B64: ${{ secrets.SEEN_DB_B64 }}
         run: |
-          New-Item -ItemType Directory -Force -Path data | Out-Null
-          if (-not (Test-Path data/seen.db) -and $env:SEEN_DB_B64) {
-            [IO.File]::WriteAllBytes((Join-Path $pwd "data\seen.db"), [Convert]::FromBase64String($env:SEEN_DB_B64))
-            Write-Host "Seeded seen.db from secret"
-          }
-          Get-ChildItem data -ErrorAction SilentlyContinue | Format-Table Name, Length
+          mkdir -p data
+          if [ ! -f data/seen.db ] && [ -n "$SEEN_DB_B64" ]; then
+            echo "$SEEN_DB_B64" | base64 --decode > data/seen.db
+            echo "Seeded seen.db from secret"
+          fi
+          ls -la data || true
 
       - name: Run one Marketplace scan
         env:

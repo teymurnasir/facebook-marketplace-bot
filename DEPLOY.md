@@ -1,4 +1,4 @@
-# Run the bot online (every 30 minutes)
+# Run the bot online
 
 Yes — you can run this in the cloud so your laptop can be off.  
 Facebook login cookies still come from your account (saved once locally, uploaded as a secret).
@@ -13,7 +13,7 @@ Facebook login cookies still come from your account (saved once locally, uploade
 
 ## Option A — GitHub Actions (free, recommended)
 
-Runs `python main.py --once` every 30 minutes.
+Runs `python main.py --once` when the Telegram-controlled cloud interval is due. Use a conservative 2-3 hour interval for free cloud runs.
 
 ### 1. Create a private GitHub repo and push this project
 
@@ -104,13 +104,13 @@ A workflow checks Telegram about every **1 minute**, replies that the scan is st
 5. In [@BotFather](https://t.me/BotFather): `/setprivacy` → your bot → **Disable** (so it sees group commands reliably)  
 6. Send `/scan` in the group again  
 
-Automatic scans every 30 minutes still run as well.
+Automatic scans still run on the configured safe interval.
 
 ## Local laptop (still works)
 
 ```bash
 source .venv/bin/activate
-python main.py          # loops every 30 minutes while the Mac is on
+python main.py          # loops on the configured interval while the Mac is on
 ```
 
 For “always on” without cloud, leave that terminal running, or use `launchd` — but the machine must stay awake.

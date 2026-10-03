@@ -3,7 +3,7 @@ main = "worker.js"
 compatibility_date = "2024-11-01"
 
 # Free plan: each cron expression ~once/hour max.
-# Two triggers (:00 and :30) → ~every 30 minutes.
+# Two triggers (:00 and :30) ask the Worker whether a scan is due.
 # Worker still respects Telegram poll_interval_minutes.
 [triggers]
 crons = ["0 * * * *", "30 * * * *"]

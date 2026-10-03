@@ -1,6 +1,6 @@
 # Facebook Marketplace → Telegram (Canada)
 
-Watches Canadian Facebook Marketplace for your car searches every **30 minutes** and sends **new** listings to Telegram (never the same post twice).
+Watches Canadian Facebook Marketplace for your car searches on a safer cloud interval and sends **new** listings to Telegram (never the same post twice).
 
 ## Searches (editable in `config.yaml`)
 
@@ -85,11 +85,11 @@ Edit `config.yaml`:
 
 See **[DEPLOY.md](DEPLOY.md)** for:
 
-- **GitHub Actions** — free, every 30 minutes in the cloud  
+- **GitHub Actions** — free cloud checks with a conservative Telegram-controlled interval  
 - **Docker** — always-on on a VPS / Railway / Render  
 
 ## Notes
 
 - Facebook changes markup often and may show checkpoints / rate-limit automation. If scrapes return 0 results, re-run `python -m src.save_session` and try `HEADLESS=false`.
-- Use this for **personal** alerts on your own account. Aggressive scraping can lock the account — keep intervals ≥ 30 minutes and don’t add dozens of cities.
+- Use this for **personal** alerts on your own account. Aggressive scraping can lock the account — prefer 2-3 hour intervals and don’t add dozens of cities.
 - This is not an official Facebook API.

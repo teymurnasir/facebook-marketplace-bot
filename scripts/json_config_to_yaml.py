@@ -41,7 +41,7 @@ def normalize(data: dict) -> dict:
 
     return {
         "country": data.get("country") or "CA",
-        "poll_interval_minutes": int(data.get("poll_interval_minutes") or 30),
+        "poll_interval_minutes": int(data.get("poll_interval_minutes") or 180),
         "max_mileage_km": fallback_km,
         "market_areas": market_areas,
         "locations": locations,
