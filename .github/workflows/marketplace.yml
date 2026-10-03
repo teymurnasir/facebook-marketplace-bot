@@ -113,6 +113,8 @@ jobs:
           HEADLESS: "true"
           FACEBOOK_STORAGE_STATE: storage_state.json
           CUSTOM_SEARCH: ${{ env.CUSTOM_SEARCH }}
+          SETTINGS_CONFIG_URL: ${{ secrets.SETTINGS_CONFIG_URL }}
+          SETTINGS_CONFIG_TOKEN: ${{ secrets.SETTINGS_CONFIG_TOKEN }}
         run: python main.py --once
 
       - name: Save seen.db for next run
