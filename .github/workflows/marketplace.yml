@@ -91,9 +91,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: data/seen.db
-          key: seen-db-v3-${{ github.run_id }}
+          key: seen-db-v4-${{ github.run_id }}
           restore-keys: |
-            seen-db-v3-
+            seen-db-v4-
 
       - name: Ensure / seed seen.db
         env:
@@ -120,7 +120,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: data/seen.db
-          key: seen-db-v3-${{ github.run_id }}
+          key: seen-db-v4-${{ github.run_id }}
 
       - name: Save refreshed Facebook session for next run
         if: always()
