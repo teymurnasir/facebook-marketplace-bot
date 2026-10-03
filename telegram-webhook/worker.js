@@ -455,17 +455,25 @@ function buildSearchFromWizard(draft) {
   return searches;
 }
 
-/**
- * Queue a scan for the always-on local PC scanner.
- * Facebook work stays on one home machine/IP (better session stability).
- * GitHub Actions is no longer used to start Marketplace scans.
- */
 async function dispatchScan(env, jobId = null) {
-  const payload = {
-    requested_at: Date.now(),
-    job_id: jobId || null,
-  };
-  await env.SETTINGS.put("pending_scan", JSON.stringify(payload));
+  const [owner, repo] = String(env.GITHUB_REPO).split("/");
+  const body = { ref: "main" };
+  if (jobId) body.inputs = { job_id: jobId };
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/actions/workflows/marketplace.yml/dispatches`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+        "User-Agent": "marketplace-telegram-webhook",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+  if (!res.ok) throw new Error(`GitHub dispatch ${res.status}: ${await res.text()}`);
 }
 
 async function cancelWizard(env, chatId, { editMessageId } = {}) {
@@ -811,7 +819,7 @@ async function runCustomJob(env, chatId, search, market_areas) {
       `\n💰 $${search.min_price}–$${search.max_price}` +
       `\n⏱ max ${(search.max_mileage_km || 250000).toLocaleString()} km` +
       `\n📍 ${market_areas.map((a) => `${a.label} (${a.radius_km} km)`).join(", ")}` +
-      "\n\n⏳ Queuing on your home PC…",
+      "\n\n⏳ Queuing in GitHub Actions…",
     parse_mode: "HTML",
   });
   try {
@@ -820,8 +828,7 @@ async function runCustomJob(env, chatId, search, market_areas) {
       chat_id: chatId,
       text:
         "🚀 <b>Custom search queued</b>\n" +
-        "Your PC will start it within about 30 seconds.\n" +
-        "You will get another message when it actually starts.",
+        "GitHub Actions will start it shortly.",
       parse_mode: "HTML",
     });
   } catch (err) {
@@ -1494,7 +1501,7 @@ async function handleScan(env, chatId) {
     await dispatchScan(env);
     await tg(env, "sendMessage", {
       chat_id: chatId,
-      text: "🚀 Scan queued for your home PC. Results will arrive here shortly.",
+      text: "🚀 Scan queued in GitHub Actions. Results will arrive here shortly.",
     });
   } catch (err) {
     await tg(env, "sendMessage", {
@@ -1530,13 +1537,53 @@ async function startCustomSearch(env, chatId) {
 }
 
 async function scheduledScan(env, { source = "timer" } = {}) {
-  // Auto timing is owned by the local PC scanner (main.py loop).
-  // Cloud ticks stay as a no-op so GitHub/Cloudflare do not start Facebook scans.
-  return {
-    ok: true,
-    skipped: "local_scanner_owns_timer",
-    source,
+  // Called often (GitHub tick + Cloudflare cron). Only dispatch when Telegram interval elapsed.
+  const cfg = await getConfig(env);
+  const intervalMin = Number(cfg.poll_interval_minutes);
+  if (!intervalMin || intervalMin <= 0) {
+    return { ok: true, skipped: "auto_off" };
+  }
+
+  const lastRaw = await env.SETTINGS.get("last_auto_scan_at");
+  const lastAt = lastRaw ? Number(lastRaw) : 0;
+  const dueAt = lastAt + intervalMin * 60 * 1000;
+  if (lastAt && Date.now() < dueAt) {
+    return {
+      ok: true,
+      skipped: "not_due",
+      next_due_ms: dueAt,
+      interval_min: intervalMin,
+    };
+  }
+
+  const block = scanBlockReason(cfg);
+  const chatIds = String(env.TELEGRAM_CHAT_IDS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const notify = async (text) => {
+    for (const chatId of chatIds) {
+      await tg(env, "sendMessage", { chat_id: chatId, text, parse_mode: "HTML" });
+    }
   };
+  if (block) {
+    await notify(block + "\n\n(from auto timer)");
+    return { ok: false, skipped: "blocked" };
+  }
+  try {
+    // Mark due time first to avoid double-dispatch from overlapping ticks.
+    await env.SETTINGS.put("last_auto_scan_at", String(Date.now()));
+    await dispatchScan(env);
+    await notify(
+      `⏰ <b>Auto scan</b> started (${formatInterval(intervalMin)}).\n` +
+        "Using your Telegram /settings.\n" +
+        `🚗 ${(cfg.searches || []).length} car(s) · 📍 ${(cfg.market_areas || []).length} location(s)`
+    );
+    return { ok: true, started: true, source, interval_min: intervalMin };
+  } catch (err) {
+    await notify(`❌ Auto timer failed to start scan:\n${String(err.message || err)}`);
+    return { ok: false, error: String(err.message || err) };
+  }
 }
 
 export default {
@@ -1615,7 +1662,7 @@ export default {
       return Response.json({ ok: true, cleared: true });
     }
 
-    // Legacy tick endpoint (GitHub auto-tick). Local scanner owns the timer now.
+    // Primary reliable timer: GitHub Actions pings this every ~15 min.
     if (
       (request.method === "GET" || request.method === "POST") &&
       url.pathname === "/tick"
