@@ -1,14 +1,9 @@
-# Asks the Worker whether a scan is due (Telegram poll_interval_minutes).
-# Explicit :00/:15/:30/:45 crons — GitHub's */15 is unreliable.
+# Manual debug only. Cloudflare Worker cron owns automatic due checks,
+# so GitHub Actions minutes are spent only on real Marketplace scans.
 
 name: Auto scan tick
 
 on:
-  schedule:
-    - cron: "0 * * * *"
-    - cron: "15 * * * *"
-    - cron: "30 * * * *"
-    - cron: "45 * * * *"
   workflow_dispatch:
 
 jobs:
