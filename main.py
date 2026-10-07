@@ -337,8 +337,8 @@ def main() -> int:
                             "❌ <b>Facebook session inactive - login needed</b>\n"
                             "Facebook requested login or a security checkpoint. Scan stopped.\n\n"
                             "Log in using <code>python -m src.save_session</code>, "
-                            "update GitHub secret <code>FACEBOOK_STORAGE_STATE_B64</code>, "
-                            "and clear the old <code>fb-session-v2-</code> GitHub Actions caches. "
+                            "and update GitHub secret <code>FACEBOOK_STORAGE_STATE_B64</code>. "
+                            "The new secret automatically replaces the old cached session. "
                             "Then send /scan to test again."
                         )
                     else:

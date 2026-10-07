@@ -63,29 +63,24 @@ jobs:
           echo "---- config.yaml (head) ----"
           head -n 80 config.yaml
 
+      - name: Identify Facebook session generation
+        id: facebook-session
+        env:
+          FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
+        run: python -m scripts.prepare_session generation >> "$GITHUB_OUTPUT"
+
       - name: Restore refreshed Facebook session cache
         uses: actions/cache/restore@v4
         with:
           path: storage_state.json
-          key: fb-session-v2-${{ github.run_id }}
+          key: fb-session-v3-${{ steps.facebook-session.outputs.generation }}-${{ github.run_id }}
           restore-keys: |
-            fb-session-v2-
+            fb-session-v3-${{ steps.facebook-session.outputs.generation }}-
 
       - name: Restore Facebook session
         env:
           FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
-        run: |
-          if [ -s storage_state.json ]; then
-            echo "Using cached refreshed Facebook session"
-          else
-            if [ -z "$FACEBOOK_STORAGE_STATE_B64" ]; then
-              echo "Missing secret FACEBOOK_STORAGE_STATE_B64"
-              exit 1
-            fi
-            echo "$FACEBOOK_STORAGE_STATE_B64" | base64 --decode > storage_state.json
-            echo "Restored Facebook session from secret"
-          fi
-          python -c "import json; d=json.load(open('storage_state.json')); assert any(c['name']=='c_user' for c in d.get('cookies',[]))"
+        run: python -m scripts.prepare_session restore
 
       - name: Restore seen.db
         uses: actions/cache/restore@v4
@@ -107,6 +102,7 @@ jobs:
           ls -la data || true
 
       - name: Run one Marketplace scan
+        id: scan
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -125,8 +121,8 @@ jobs:
           key: seen-db-v4-${{ github.run_id }}
 
       - name: Save refreshed Facebook session for next run
-        if: always()
+        if: success() && steps.scan.outputs.facebook_session_refreshed == 'true'
         uses: actions/cache/save@v4
         with:
           path: storage_state.json
-          key: fb-session-v2-${{ github.run_id }}
+          key: fb-session-v3-${{ steps.facebook-session.outputs.generation }}-${{ github.run_id }}

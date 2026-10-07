@@ -57,6 +57,13 @@ The schedule (`*/30 * * * *`) keeps running after that.
 1. On your Mac: `python -m src.save_session`
 2. Re-run `bash scripts/encode_session.sh`
 3. Update the `FACEBOOK_STORAGE_STATE_B64` secret
+4. Send `/scan` in Telegram and check for verified Facebook access.
+
+Session caches are scoped to a fingerprint of the secret. Replacing the secret
+automatically starts a new cache generation; no manual cache clearing is needed.
+Failed or unverified scans do not save session caches. The login helper validates
+login cookies before overwriting the local session file. Cookie expiry dates do
+not guarantee continued access: Facebook can reject an otherwise unexpired session.
 
 ---
 

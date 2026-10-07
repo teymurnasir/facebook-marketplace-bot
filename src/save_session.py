@@ -16,6 +16,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
+from .session_state import write_session_state
+
 
 def _desktop_chrome_user_agent(chrome_version: str) -> str:
     version = (chrome_version or "120.0.0.0").split()[0]
@@ -46,7 +48,10 @@ def main() -> None:
         page = context.new_page()
         page.goto("https://www.facebook.com/login", wait_until="domcontentloaded")
         input("Press Enter after you are logged in and Marketplace loads… ")
-        context.storage_state(path=str(out))
+        if "/marketplace" not in page.url or "/login" in page.url or "/checkpoint" in page.url:
+            browser.close()
+            raise SystemExit("Marketplace is not open. Log in and open Marketplace before saving.")
+        write_session_state(out, context.storage_state())
         browser.close()
 
     print(f"Saved session → {out.resolve()}")

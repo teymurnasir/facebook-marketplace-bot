@@ -28,23 +28,25 @@ jobs:
         run: |
           pip install playwright
           playwright install chromium --with-deps
+      - name: Identify Facebook session generation
+        id: facebook-session
+        if: inputs.refresh_details
+        env:
+          FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
+        run: python -m scripts.prepare_session generation >> "$GITHUB_OUTPUT"
       - name: Restore saved Facebook session
         if: inputs.refresh_details
         uses: actions/cache/restore@v4
         with:
           path: storage_state.json
-          key: fb-session-v2-${{ github.run_id }}
+          key: fb-session-v3-${{ steps.facebook-session.outputs.generation }}-${{ github.run_id }}
           restore-keys: |
-            fb-session-v2-
+            fb-session-v3-${{ steps.facebook-session.outputs.generation }}-
       - name: Restore session secret if no cached session
         if: inputs.refresh_details
         env:
           FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
-        run: |
-          if [ ! -s storage_state.json ]; then
-            test -n "$FACEBOOK_STORAGE_STATE_B64"
-            echo "$FACEBOOK_STORAGE_STATE_B64" | base64 --decode > storage_state.json
-          fi
+        run: python -m scripts.prepare_session restore
       - name: Restore existing scan database
         uses: actions/cache/restore@v4
         with:
@@ -54,6 +56,7 @@ jobs:
             seen-db-v4-
           fail-on-cache-miss: true
       - name: Publish saved findings for Telegram /cars
+        id: sync
         env:
           SETTINGS_CONFIG_URL: ${{ secrets.SETTINGS_CONFIG_URL }}
           SETTINGS_CONFIG_TOKEN: ${{ secrets.SETTINGS_CONFIG_TOKEN }}
@@ -66,8 +69,8 @@ jobs:
           path: data/seen.db
           key: seen-db-v4-${{ github.run_id }}
       - name: Save refreshed Facebook session
-        if: success() && inputs.refresh_details
+        if: success() && inputs.refresh_details && steps.sync.outputs.facebook_session_refreshed == 'true'
         uses: actions/cache/save@v4
         with:
           path: storage_state.json
-          key: fb-session-v2-${{ github.run_id }}
+          key: fb-session-v3-${{ steps.facebook-session.outputs.generation }}-${{ github.run_id }}

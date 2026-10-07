@@ -14,6 +14,7 @@ from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_
 from .models import Listing, SearchConfig
 from .listing_details import classify_safety
 from .search_queries import MAKES, MAKE_ALIASES, PLUGIN_RE, hybrid_requested, model_query, split_make
+from .session_state import report_session_refresh, write_session_state
 
 logger = logging.getLogger(__name__)
 
@@ -860,8 +861,8 @@ class MarketplaceScraper:
         if not path:
             return
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            context.storage_state(path=str(path))
+            write_session_state(path, context.storage_state())
+            report_session_refresh()
             logger.info("Saved refreshed Facebook session → %s", path)
         except Exception:
             logger.exception("Could not save refreshed Facebook session state")
