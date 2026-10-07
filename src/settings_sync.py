@@ -118,3 +118,20 @@ def ack_pending_scan(requested_at: Any) -> None:
             json={"requested_at": requested_at},
         )
         res.raise_for_status()
+
+
+def publish_findings(findings: list[dict[str, str]]) -> bool:
+    if not settings_enabled():
+        return False
+    with httpx.Client(timeout=30.0, trust_env=False) as client:
+        res = client.post(
+            f"{_base_url()}/findings",
+            headers=_headers(),
+            json={"findings": findings},
+        )
+        res.raise_for_status()
+        result = res.json()
+    if not result.get("ok") or result.get("count") != len(findings):
+        raise RuntimeError("The bot did not confirm the complete findings snapshot")
+    logger.info("Published %d database findings for Telegram /cars", len(findings))
+    return True

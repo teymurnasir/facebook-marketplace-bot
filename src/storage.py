@@ -48,5 +48,16 @@ class SeenStore:
         )
         self._conn.commit()
 
+    def all_findings(self) -> list[dict[str, str]]:
+        rows = self._conn.execute(
+            """
+            SELECT listing_id, search_name, title, url, first_seen_at
+            FROM seen_listings
+            ORDER BY first_seen_at DESC, listing_id DESC
+            """
+        ).fetchall()
+        fields = ("listing_id", "search_name", "title", "url", "first_seen_at")
+        return [dict(zip(fields, (str(value or "") for value in row))) for row in rows]
+
     def close(self) -> None:
         self._conn.close()

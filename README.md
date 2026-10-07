@@ -81,6 +81,12 @@ reports **status not verified** rather than assuming Facebook is active. Session
 checks reuse the scan pages and do not add extra Facebook requests. `--seed` stays
 silent. Disabling `TELEGRAM_SCAN_SUMMARY` hides only the completion summary.
 
+Send `/cars` in Telegram to browse all saved database findings, newest first,
+with Marketplace links and Previous/Next buttons. `/cars 2` opens page two.
+Each successful scan syncs the complete `seen.db` history to the Cloudflare bot;
+browsing does not start a Facebook scan. Old findings may include ads that have
+since been removed. Only authorized Telegram chats can view the list.
+
 ## Tweaking searches
 
 Edit `config.yaml`:

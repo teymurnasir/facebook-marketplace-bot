@@ -88,6 +88,22 @@ class SessionNotificationsTest(unittest.TestCase):
         self.telegram.send_text.assert_not_called()
         self.telegram.send_listing.assert_not_called()
 
+    def test_scan_syncs_full_history_even_when_there_are_no_new_cars(self):
+        self.store.is_seen.return_value = True
+        history = [{"listing_id": "123"}, {"listing_id": "456"}]
+        self.store.all_findings.return_value = history
+        with patch("main.settings_enabled", return_value=True), patch("main.publish_findings") as publish:
+            self.assertEqual(self.run_scan(), 0)
+        publish.assert_called_once_with(history)
+        self.telegram.send_listing.assert_not_called()
+
+    def test_sync_failure_keeps_scan_result_and_warns_about_old_catalog(self):
+        with patch("main.settings_enabled", return_value=True), \
+                patch("main.publish_findings", side_effect=RuntimeError("Sync unavailable")):
+            self.assertEqual(self.run_scan(), 1)
+        self.assertTrue(any("/cars may show the previous scan" in m for m in self.messages()))
+        self.assertIn("finished", self.messages()[-1])
+
     def test_health_notification_is_independent_of_summary_setting(self):
         with patch.dict(os.environ, {"TELEGRAM_SCAN_SUMMARY": "0"}):
             self.run_scan()

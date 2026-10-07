@@ -1,6 +1,7 @@
 /**
  * Canada-only Marketplace Telegram webhook
  *  - /scan — shared saved settings
+ *  - /cars — browse saved database findings without a new scan
  *  - /settings — shared filters (cars, per-car km, locations + radius)
  *  - /customsearch — one-off search (not saved)
  *
@@ -15,6 +16,7 @@ const HELP = new Set(["/start", "/help"]);
 const ID = new Set(["/id", "/chatid"]);
 const SETTINGS = new Set(["/settings", "/filters", "/config"]);
 const CUSTOM = new Set(["/customsearch", "/custom", "/oneshot"]);
+const CARS_PAGE_SIZE = 5;
 
 const CANADA_NOTE = "🇨🇦 <b>Canada only</b> — locations & prices are for Canadian Marketplace.";
 
@@ -97,6 +99,55 @@ function escapeHtml(s) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function shortText(value, length) {
+  const chars = Array.from(String(value || ""));
+  return chars.length > length ? chars.slice(0, length - 3).join("") + "..." : chars.join("");
+}
+
+async function showFindingsPage(env, chatId, requestedPage = 0, messageId = null) {
+  const raw = await env.SETTINGS.get("findings");
+  const snapshot = raw ? JSON.parse(raw) : null;
+  const findings = snapshot?.findings || [];
+  const pages = Math.max(1, Math.ceil(findings.length / CARS_PAGE_SIZE));
+  const page = Math.min(Math.max(0, Number(requestedPage) || 0), pages - 1);
+  const start = page * CARS_PAGE_SIZE;
+  const lines = [`<b>Saved cars: ${findings.length}</b>`];
+  if (!snapshot) {
+    lines.push("The database has not synced yet. Run /scan, then try /cars again.");
+  } else if (!findings.length) {
+    lines.push("No saved findings yet. Run /scan to check your searches.");
+  } else {
+    lines.push(`Page ${page + 1}/${pages}`, "");
+    for (const [index, car] of findings.slice(start, start + CARS_PAGE_SIZE).entries()) {
+      const title = escapeHtml(shortText(car.title || "Marketplace listing", 80));
+      const search = escapeHtml(shortText(car.search_name, 24));
+      const link = `https://www.facebook.com/marketplace/item/${car.listing_id}`;
+      lines.push(`${start + index + 1}. <a href="${link}">${title}</a>`);
+      if (search) lines.push(search);
+      lines.push("");
+    }
+    lines.push("Saved history; some ads may no longer be available.");
+  }
+  if (snapshot?.updated_at) {
+    lines.push(`Database synced: ${snapshot.updated_at.replace("T", " ").slice(0, 19)} UTC`);
+  }
+  const buttons = [];
+  if (page > 0) buttons.push({ text: "Previous", callback_data: `cars:page:${page - 1}` });
+  if (page + 1 < pages) buttons.push({ text: "Next", callback_data: `cars:page:${page + 1}` });
+  const body = {
+    chat_id: chatId,
+    text: lines.join("\n"),
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+    reply_markup: { inline_keyboard: buttons.length ? [buttons] : [] },
+  };
+  if (messageId != null) body.message_id = messageId;
+  const result = await tg(env, messageId != null ? "editMessageText" : "sendMessage", body);
+  if (!result.ok && !String(result.description || "").includes("message is not modified")) {
+    throw new Error(`Telegram saved cars failed: ${result.description || "unknown error"}`);
+  }
 }
 
 const INTERVAL_OPTS = [30, 60, 90, 120, 180]; // minutes (0 = auto off)
@@ -853,6 +904,11 @@ async function handleCallback(env, cq) {
   }
   await tg(env, "answerCallbackQuery", { callback_query_id: cq.id });
 
+  if (/^cars:page:\d+$/.test(data)) {
+    await showFindingsPage(env, chatId, Number(data.split(":")[2]), cq.message.message_id);
+    return;
+  }
+
   const cfg = await getConfig(env);
   let wizard = (await getWizard(env, chatId)) || {};
 
@@ -1595,6 +1651,47 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/findings" && ["GET", "POST"].includes(request.method)) {
+      const token = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
+      if (!token || token !== env.CONFIG_TOKEN) {
+        return new Response("unauthorized", { status: 401 });
+      }
+      if (request.method === "GET") {
+        const raw = await env.SETTINGS.get("findings");
+        return Response.json(raw ? JSON.parse(raw) : { findings: [], updated_at: null });
+      }
+      let payload;
+      try {
+        payload = await request.json();
+      } catch {
+        return new Response("bad json", { status: 400 });
+      }
+      if (!payload || !Array.isArray(payload.findings)) return new Response("findings must be an array", { status: 400 });
+      const findings = [];
+      const ids = new Set();
+      for (const row of payload.findings) {
+        if (!row || typeof row !== "object" || !/^\d{1,30}$/.test(String(row.listing_id || ""))) {
+          return new Response("invalid listing id", { status: 400 });
+        }
+        const listingId = String(row.listing_id);
+        if (ids.has(listingId)) return new Response("duplicate listing id", { status: 400 });
+        ids.add(listingId);
+        findings.push({
+          listing_id: listingId,
+          title: String(row.title || ""),
+          search_name: String(row.search_name || ""),
+          url: `https://www.facebook.com/marketplace/item/${listingId}`,
+          first_seen_at: String(row.first_seen_at || ""),
+        });
+      }
+      const snapshot = JSON.stringify({ findings, updated_at: new Date().toISOString() });
+      if (new TextEncoder().encode(snapshot).length > 20 * 1024 * 1024) {
+        return new Response("findings snapshot too large", { status: 413 });
+      }
+      await env.SETTINGS.put("findings", snapshot);
+      return Response.json({ ok: true, count: findings.length });
+    }
+
     if (request.method === "GET" && url.pathname === "/config") {
       const token = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
       if (!token || token !== env.CONFIG_TOKEN) {
@@ -1696,6 +1793,17 @@ export default {
       const text = msg.text.trim();
       const cmd = text.split(/\s+/)[0].split("@")[0].toLowerCase();
 
+      if (cmd === "/cars") {
+        if (!authorized(chatId, env)) {
+          await tg(env, "sendMessage", { chat_id: chatId, text: "Not authorized." });
+          return new Response("ok");
+        }
+        const pageNumber = text.split(/\s+/)[1];
+        const page = /^\d{1,6}$/.test(pageNumber || "") ? Math.max(1, Number(pageNumber)) - 1 : 0;
+        await showFindingsPage(env, chatId, page);
+        return new Response("ok");
+      }
+
       if (await handleWizardText(env, chatId, text)) return new Response("ok");
 
       if (ID.has(cmd)) {
@@ -1712,6 +1820,7 @@ export default {
           text:
             "🇨🇦 <b>Canada Marketplace car alerts</b>\n\n" +
             "/scan — run saved filters\n" +
+            "/cars — browse all saved findings\n" +
             "/settings — shared cars, km, locations+radius\n" +
             "/customsearch — one-off: city, radius, car, years, price, km\n" +
             "/cancel — abort wizard\n" +

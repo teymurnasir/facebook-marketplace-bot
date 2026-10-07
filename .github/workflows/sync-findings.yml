@@ -1,0 +1,33 @@
+name: Sync saved cars database
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: marketplace-scan
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install sync dependencies
+        run: pip install httpx PyYAML
+      - name: Restore existing scan database
+        uses: actions/cache/restore@v4
+        with:
+          path: data/seen.db
+          key: seen-db-v4-${{ github.run_id }}
+          restore-keys: |
+            seen-db-v4-
+          fail-on-cache-miss: true
+      - name: Publish saved findings for Telegram /cars
+        env:
+          SETTINGS_CONFIG_URL: ${{ secrets.SETTINGS_CONFIG_URL }}
+          SETTINGS_CONFIG_TOKEN: ${{ secrets.SETTINGS_CONFIG_TOKEN }}
+        run: python -m scripts.sync_findings

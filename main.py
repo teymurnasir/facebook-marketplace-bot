@@ -17,6 +17,7 @@ from src.settings_sync import (
     ack_pending_scan,
     fetch_job_config,
     get_pending_scan,
+    publish_findings,
     settings_enabled,
     sync_shared_settings,
     write_config_yaml,
@@ -125,6 +126,17 @@ def run_once(
             title=listing.title,
             url=listing.url,
         )
+
+    if settings_enabled():
+        try:
+            publish_findings(store.all_findings())
+        except Exception:
+            logger.exception("Could not sync database findings for Telegram /cars")
+            if notify and telegram is not None:
+                telegram.send_text(
+                    "⚠️ Saved car list could not be synced. "
+                    "/cars may show the previous scan's database until the next successful sync."
+                )
 
     logger.info("Cycle done: %d scraped, %d new", len(listings), new_count)
     if notify and telegram is not None and env_bool("TELEGRAM_SCAN_SUMMARY", True):

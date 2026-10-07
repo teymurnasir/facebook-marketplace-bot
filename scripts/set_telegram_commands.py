@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 COMMANDS = [
     {"command": "scan", "description": "Run Marketplace search now"},
+    {"command": "cars", "description": "Browse all saved car findings"},
     {"command": "settings", "description": "View/change shared search filters"},
     {"command": "filters", "description": "Same as /settings"},
     {"command": "customsearch", "description": "One-off: city, radius, car, years, price, km"},
