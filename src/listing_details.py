@@ -6,10 +6,11 @@ import re
 
 
 NEGATIVE = re.compile(
-    r"\b(?:no|without)\s+(?:a\s+)?(?:valid\s+|current\s+)?safety\b"
+    r"\b(?:no|without)\s+(?:a\s+)?(?:valid\s+|current\s+)?safety\b(?!\s+(?:issues?|concerns?|problems?|recalls?)\b)"
     r"|\bnot\s+(?:safetied|safety\s+certified|certified)\b"
     r"|\b(?:needs?|requires?)\s+(?:a\s+)?safety\b"
-    r"|\bsafety\s*(?::|is)?\s*(?:no|not\s+included|expired)\b"
+    r"|\bsafety\s*(?::|is)?\s*(?:no|not\s+(?:included|done|completed|passed)|expired)\b"
+    r"|\buncertified\b"
     r"|\b(?:sold|selling|sell)\s+as[ -]is\b|\bas[ -]is\b"
     r"|\b(?:won't|will\s+not|cannot|can't|does\s+not|doesn't|failed\s+to)\s+pass\s+(?:a\s+)?safety\b",
     re.IGNORECASE,

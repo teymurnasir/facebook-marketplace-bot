@@ -25,7 +25,7 @@ class SafetyTest(unittest.TestCase):
         for text in ("", "Great safety features", "Can provide safety certificate",
                      "Safety available for extra cost", "Should pass safety",
                      "Certified pre-owned", "Was safetied", "Safetied upon request",
-                     "Safety included. Sold as-is."):
+                     "Safety included. Sold as-is.", "No safety issues", "No safety recalls"):
             with self.subTest(text=text):
                 self.assertEqual(classify_safety(text)[0], "unknown")
 
