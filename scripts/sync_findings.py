@@ -1,4 +1,4 @@
-"""Publish the existing scan database to Telegram without contacting Facebook."""
+"""Publish saved findings, optionally refreshing seller descriptions first."""
 
 from __future__ import annotations
 

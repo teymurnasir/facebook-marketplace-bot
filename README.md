@@ -92,7 +92,7 @@ are labeled explicitly; the bot does not guess prices or mileage. Enrichment
 does not re-send previously notified ads.
 
 Search variants are honored (including "Optima HEV" for a hybrid search), while
-hybrid searches still require hybrid/HEV/PHEV evidence in the listing card.
+hybrid searches still require hybrid/HEV/PHEV evidence in the card or seller description.
 Scan summaries include the number of inspected and matching cards per search
 and exclusion reasons when a search finds no matches.
 
