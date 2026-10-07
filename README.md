@@ -73,6 +73,14 @@ Useful flags:
 3. Extra keyword filters run (e.g. Optima **hybrid**).
 4. IDs are stored in `data/seen.db`; only unseen IDs are sent to Telegram.
 
+Each scan sends a Telegram start message, confirms **Facebook session active** after
+reading Marketplace listing data with the logged-in session, and includes that
+status in the completion message. Login/checkpoint pages send a **login needed**
+alert and stop the scan. If no authenticated listing data can be read, the bot
+reports **status not verified** rather than assuming Facebook is active. Session
+checks reuse the scan pages and do not add extra Facebook requests. `--seed` stays
+silent. Disabling `TELEGRAM_SCAN_SUMMARY` hides only the completion summary.
+
 ## Tweaking searches
 
 Edit `config.yaml`:

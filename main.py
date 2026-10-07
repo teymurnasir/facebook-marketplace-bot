@@ -12,7 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from src.config_loader import load_config
-from src.scraper import MarketplaceScraper
+from src.scraper import FacebookSessionError, MarketplaceScraper
 from src.settings_sync import (
     ack_pending_scan,
     fetch_job_config,
@@ -66,6 +66,27 @@ def run_once(
             )
         return 0
 
+    ignore_seen = env_bool("CUSTOM_SEARCH", False)
+    if ignore_seen:
+        scan_name = "Custom search"
+    elif env_bool("MANUAL_SCAN", False):
+        scan_name = "Manual /scan"
+    else:
+        scan_name = "Auto scan"
+
+    def session_active() -> None:
+        if notify and telegram is not None:
+            telegram.send_text(
+                "✅ <b>Facebook session active</b>\n"
+                "Logged-in Marketplace data verified. Scan continuing."
+            )
+
+    if notify and telegram is not None:
+        telegram.send_text(
+            f"🔎 <b>{scan_name} started</b>\n"
+            "Checking Facebook session and Marketplace access..."
+        )
+
     listings = scraper.run_cycle(
         searches=cfg["searches"],
         locations=cfg["locations"],
@@ -76,10 +97,16 @@ def run_once(
         url_modes=cfg["scraper"].get("url_modes"),
         search_mode_locations=cfg["scraper"].get("search_mode_locations"),
         market_areas=areas,
+        on_session_active=session_active,
     )
 
-    # Custom one-off searches re-send matches even if already in seen.db
-    ignore_seen = env_bool("CUSTOM_SEARCH", False)
+    if not scraper.session_verified and notify and telegram is not None:
+        telegram.send_text(
+            "⚠️ <b>Facebook status not verified</b>\n"
+            "No authenticated Marketplace listing data was detected. "
+            "This can mean an empty search, a loading problem, or restricted access. "
+            "Open Facebook Marketplace in your browser to check."
+        )
 
     new_count = 0
     for listing in listings:
@@ -101,20 +128,20 @@ def run_once(
 
     logger.info("Cycle done: %d scraped, %d new", len(listings), new_count)
     if notify and telegram is not None and env_bool("TELEGRAM_SCAN_SUMMARY", True):
-        if ignore_seen:
-            prefix = "🔎 Custom search"
-        elif env_bool("MANUAL_SCAN", False):
-            prefix = "✅ Manual /scan"
-        else:
-            prefix = "✅ Auto scan"
+        prefix = f"{'✅' if scraper.session_verified else '⚠️'} {scan_name}"
+        status = (
+            "Facebook session active: Marketplace data verified."
+            if scraper.session_verified
+            else "Facebook status not verified."
+        )
         if new_count:
             telegram.send_text(
-                f"{prefix} finished — <b>{new_count}</b> listing(s) sent above."
+                f"{prefix} finished — <b>{new_count}</b> listing(s) sent above.\n{status}"
             )
         else:
             telegram.send_text(
                 f"{prefix} finished — no matching cars "
-                f"(checked {len(listings)} raw match(es))."
+                f"(checked {len(listings)} match(es)).\n{status}"
             )
     return new_count
 
@@ -251,17 +278,6 @@ def main() -> int:
             cfg, interval, custom, pending_payload = _prepare_cycle(root)
             scraper.timeout_ms = cfg["scraper"]["timeout_ms"]
 
-            if telegram and not seed:
-                if custom:
-                    telegram.send_text(
-                        "🚀 <b>Custom search started</b> on your PC…\n"
-                        "Please wait — results will arrive in this chat."
-                    )
-                elif once or env_bool("MANUAL_SCAN", False):
-                    telegram.send_text(
-                        "🚀 <b>Manual /scan started</b> on your PC…\n"
-                        "Please wait — results will arrive in this chat."
-                    )
             if pending_payload is not None:
                 try:
                     ack_pending_scan(pending_payload.get("requested_at"))
@@ -278,11 +294,22 @@ def main() -> int:
             except Exception as exc:
                 logger.exception("Scan failed")
                 if telegram and not seed:
-                    telegram.send_text(
-                        "❌ <b>Marketplace scan failed</b>\n"
-                        f"<code>{type(exc).__name__}: {_escape_tg(str(exc)[:500])}</code>\n\n"
-                        "See GUIDE.html → Errors for what to do."
-                    )
+                    if isinstance(exc, FacebookSessionError):
+                        telegram.send_text(
+                            "❌ <b>Facebook session inactive - login needed</b>\n"
+                            "Facebook requested login or a security checkpoint. Scan stopped.\n\n"
+                            "Log in using <code>python -m src.save_session</code>, "
+                            "update GitHub secret <code>FACEBOOK_STORAGE_STATE_B64</code>, "
+                            "and clear the old <code>fb-session-v2-</code> GitHub Actions caches. "
+                            "Then send /scan to test again."
+                        )
+                    else:
+                        telegram.send_text(
+                            "❌ <b>Marketplace scan failed</b>\n"
+                            "Facebook access was not confirmed for the full scan.\n"
+                            f"<code>{type(exc).__name__}: {_escape_tg(str(exc)[:500])}</code>\n\n"
+                            "See GUIDE.html → Errors for what to do."
+                        )
                 if once or seed:
                     return 1
             if seed:

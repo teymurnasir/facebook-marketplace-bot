@@ -4,8 +4,8 @@ import json
 import logging
 import re
 import time
-from typing import Any
-from urllib.parse import urlencode
+from typing import Any, Callable
+from urllib.parse import urlencode, urlparse
 
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_playwright
 
@@ -490,6 +490,7 @@ class MarketplaceScraper:
         self.storage_state_path = storage_state_path
         self.headless = headless
         self.timeout_ms = timeout_ms
+        self.session_verified = False
 
     def run_cycle(
         self,
@@ -502,8 +503,12 @@ class MarketplaceScraper:
         url_modes: list[str] | None = None,
         search_mode_locations: list[str] | None = None,
         market_areas: list[dict[str, Any]] | None = None,
+        on_session_active: Callable[[], None] | None = None,
     ) -> list[Listing]:
+        self.session_verified = False
         results: dict[str, Listing] = {}
+        successful_pages = 0
+        failed_pages = 0
         modes = url_modes or ["vehicles", "search"]
         search_hubs = set(search_mode_locations or [])
 
@@ -551,10 +556,12 @@ class MarketplaceScraper:
                                 )
                                 try:
                                     batch = self._scrape_url(page, url, search, max_scrolls)
+                                    successful_pages += 1
                                 except FacebookSessionError:
                                     session_healthy = False
                                     raise
                                 except Exception:
+                                    failed_pages += 1
                                     logger.exception(
                                         "Scrape failed for %s / %s / %s",
                                         search.name,
@@ -562,6 +569,12 @@ class MarketplaceScraper:
                                         mode,
                                     )
                                     batch = []
+
+                                if not self.session_verified and self._has_authenticated_data(page, batch):
+                                    self.session_verified = True
+                                    logger.info("Facebook session active: authenticated Marketplace data verified")
+                                    if on_session_active is not None:
+                                        on_session_active()
 
                                 kept = 0
                                 for listing in batch:
@@ -597,11 +610,25 @@ class MarketplaceScraper:
 
                                 time.sleep(delay_between_searches_sec)
             finally:
-                if session_healthy:
+                if session_healthy and self.session_verified:
                     self._save_storage_state(context)
                 browser.close()
 
+        if failed_pages and not successful_pages:
+            raise RuntimeError("All Marketplace pages failed to load; Facebook status could not be verified.")
         return list(results.values())
+
+    def _has_authenticated_data(self, page: Page, listings: list[Listing]) -> bool:
+        # A saved cookie or an empty page alone does not prove Marketplace access.
+        target = urlparse(page.url)
+        if not listings or target.hostname not in {"facebook.com", "www.facebook.com"}:
+            return False
+        if not target.path.startswith("/marketplace/"):
+            return False
+        return any(
+            cookie.get("name") == "c_user" and cookie.get("value")
+            for cookie in page.context.cookies(["https://www.facebook.com/"])
+        )
 
     def _launch(self, p: Playwright) -> tuple[Browser, BrowserContext, Page]:
         browser = p.chromium.launch(headless=self.headless)
@@ -713,6 +740,7 @@ class MarketplaceScraper:
                 page.mouse.wheel(0, 3200)
                 page.wait_for_timeout(1500)
 
+            self._raise_if_session_problem(page)
             dom_listings = _extract_listings_from_dom(page, search.name)
         finally:
             page.remove_listener("response", on_response)

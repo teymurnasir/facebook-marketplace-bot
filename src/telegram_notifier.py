@@ -73,11 +73,12 @@ class TelegramNotifier:
             return False
 
     def send_text(self, text: str) -> bool:
-        ok_any = False
+        delivered = 0
         for chat_id in list(self.chat_ids):
             if self._send_one(chat_id, text):
-                ok_any = True
-        return ok_any
+                delivered += 1
+        logger.info("Telegram message accepted for %d/%d chat(s)", delivered, len(self.chat_ids))
+        return delivered > 0
 
     def send_listing(self, listing: Listing) -> bool:
         return self.send_text(listing.telegram_message())
