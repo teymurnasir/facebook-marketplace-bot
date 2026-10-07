@@ -132,20 +132,23 @@ async function showFindingsPage(env, chatId, requestedPage = 0, messageId = null
   } else {
     lines.push(`Page ${page + 1}/${pages}`, "");
     for (const [index, car] of findings.slice(start, start + CARS_PAGE_SIZE).entries()) {
-      const title = escapeHtml(shortText(car.title || "Marketplace listing", 80));
+      const title = escapeHtml(shortText(car.title || "Marketplace listing", 64));
       const search = escapeHtml(shortText(car.search_name, 24));
       const link = `https://www.facebook.com/marketplace/item/${car.listing_id}`;
       const amount = detailNumber(car.price_amount);
       const price = amount != null
         ? `CA$${amount.toLocaleString("en-CA")}`
-        : escapeHtml(shortText(car.price || "not saved yet", 32));
+        : escapeHtml(shortText(car.price || "not saved yet", 24));
       const year = detailNumber(car.year) || String(car.title || "").match(/\b(?:19|20)\d{2}\b/)?.[0];
       const mileage = detailNumber(car.mileage_km);
-      const location = escapeHtml(shortText(car.location || "not shown", 48));
+      const location = escapeHtml(shortText(car.location || "not shown", 40));
       lines.push(`${start + index + 1}. <b><a href="${link}">${title}</a></b>`);
       if (search) lines.push(`Search: ${search}`);
       lines.push(`Price: <b>${price}</b> | Year: ${year || "not shown"}`);
       lines.push(`Mileage: ${mileage == null ? "not shown" : mileage.toLocaleString("en-CA") + " km"}`);
+      const safety = ["yes", "no"].includes(car.safety) ? car.safety : "unknown";
+      lines.push(`Safety: <b>${safety}</b> (seller description)`);
+      if (car.safety_evidence) lines.push(`Seller: ${escapeHtml(shortText(car.safety_evidence, 60))}`);
       lines.push(`Location: ${location}`);
       lines.push(`First found: ${findingDate(car.first_seen_at)}`);
       lines.push(`Last seen: ${findingDate(car.last_seen_at)}`);
@@ -497,12 +500,13 @@ function buildSearchFromWizard(draft) {
   const query = (draft.query || draft.name || "").trim();
   const qLower = query.toLowerCase();
   const name = (draft.name || query).trim();
-  const hybrid = !!draft.hybrid;
+  const hybrid = !!draft.hybrid || /\b(hybrid|hev|phev|huv)\b/i.test(qLower);
+  const modelQuery = hybrid ? qLower.replace(/\b(hybrid|hev|phev|huv)\b/g, "").replace(/\s+/g, " ").trim() : qLower;
   const compact = qLower.replace(/\s+/g, "");
-  const words = qLower.split(/\s+/).filter(Boolean);
+  const words = modelQuery.split(/\s+/).filter(Boolean);
   // Require the full phrase (or compact form). For multi-word queries also
   // require every word so "kia forte" does not match "kia sorento".
-  const must_include_any = [qLower, compact].filter(
+  const must_include_any = [modelQuery, modelQuery.replace(/\s+/g, "")].filter(
     (v, i, arr) => v && arr.indexOf(v) === i
   );
   const must_include_all = words.length > 1 ? words : [];
@@ -525,6 +529,10 @@ function buildSearchFromWizard(draft) {
     require_mileage: false,
   };
   if (compact && !searches.queries.includes(compact)) searches.queries.push(compact);
+  if (hybrid && /\boptima\b/.test(modelQuery)) {
+    searches.must_include_any = ["optima", "k5"];
+    searches.must_include_all = [];
+  }
   if (!searches.must_include_any.length) searches.must_include_any = [qLower];
   return searches;
 }
@@ -1711,6 +1719,9 @@ export default {
           mileage_km: detailNumber(row.mileage_km),
           location: String(row.location || ""),
           last_seen_at: String(row.last_seen_at || ""),
+          safety: ["yes", "no"].includes(row.safety) ? row.safety : "unknown",
+          safety_evidence: shortText(row.safety_evidence, 160),
+          details_checked_at: String(row.details_checked_at || ""),
         });
       }
       const snapshot = JSON.stringify({ findings, updated_at: new Date().toISOString() });

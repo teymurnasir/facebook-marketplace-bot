@@ -96,6 +96,20 @@ hybrid searches still require hybrid/HEV/PHEV evidence in the listing card.
 Scan summaries include the number of inspected and matching cards per search
 and exclusion reasons when a search finds no matches.
 
+Safety is shown in new alerts and `/cars` as `yes`, `no`, or `unknown`, based on
+the seller's description about safety certification. A short seller excerpt is
+included when available. Conditional claims (e.g. "can provide safety"), missing
+descriptions, and conflicting claims stay unknown. This is a seller statement,
+not an independent inspection or confirmation that a certificate is valid.
+Descriptions are cached for 24 hours, with up to 30 detail-page visits per scan;
+unavailable or unchecked descriptions remain unknown. Description mileage and
+hybrid evidence are also used when the search card does not provide them.
+
+Optima hybrid searches automatically include `kia optima hybrid`, `optima hybrid`,
+`kia optima hev`, `optima hev`, `kia optima phev`, `kia optima huv`,
+`kiaoptima hybrid`, and `kia optima`, plus any configured variants. `HUV` is a
+search spelling variant; it alone is not evidence that a vehicle is hybrid.
+
 ## Tweaking searches
 
 Edit `config.yaml`:

@@ -29,6 +29,8 @@ class SeenStore:
         for name, sql_type in {
             "price": "TEXT", "price_amount": "INTEGER", "year": "INTEGER",
             "mileage_km": "INTEGER", "location": "TEXT", "last_seen_at": "TIMESTAMP",
+            "description": "TEXT", "safety": "TEXT", "safety_evidence": "TEXT",
+            "details_checked_at": "TEXT",
         }.items():
             if name not in columns:
                 self._conn.execute(f"ALTER TABLE seen_listings ADD COLUMN {name} {sql_type}")
@@ -75,19 +77,28 @@ class SeenStore:
             (listing.title, listing.url, listing.price, listing.price_amount, listing.year,
              listing.mileage_km, listing.location, listing.listing_id),
         )
+        if listing.details_checked_at:
+            self._conn.execute(
+                """UPDATE seen_listings SET description = ?, safety = ?,
+                   safety_evidence = ?, details_checked_at = ? WHERE listing_id = ?""",
+                (listing.description, listing.safety, listing.safety_evidence,
+                 listing.details_checked_at, listing.listing_id),
+            )
         self._conn.commit()
 
     def all_findings(self) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             """
             SELECT listing_id, search_name, title, url, first_seen_at,
-                   price, price_amount, year, mileage_km, location, last_seen_at
+                   price, price_amount, year, mileage_km, location, last_seen_at,
+                   description, safety, safety_evidence, details_checked_at
             FROM seen_listings
             ORDER BY first_seen_at DESC, listing_id DESC
             """
         ).fetchall()
         fields = ("listing_id", "search_name", "title", "url", "first_seen_at",
-                  "price", "price_amount", "year", "mileage_km", "location", "last_seen_at")
+                  "price", "price_amount", "year", "mileage_km", "location", "last_seen_at",
+                  "description", "safety", "safety_evidence", "details_checked_at")
         return [dict(zip(fields, row)) for row in rows]
 
     def close(self) -> None:

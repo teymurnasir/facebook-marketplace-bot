@@ -5,21 +5,24 @@ import logging
 import re
 import time
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 from urllib.parse import urlencode, urlparse
 
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_playwright
 
 from .models import Listing, SearchConfig
+from .listing_details import classify_safety
 
 logger = logging.getLogger(__name__)
 
 ITEM_ID_RE = re.compile(r"/marketplace/item/(\d+)")
 YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 HYBRID_RE = re.compile(r"\b(?:hybrid|hev|phev)\b", re.IGNORECASE)
+HYBRID_QUERY_RE = re.compile(r"\b(?:hybrid|hev|phev|huv)\b", re.IGNORECASE)
 PRICE_RE = re.compile(r"[\d,]+")
 MILEAGE_RE = re.compile(
-    r"([\d.,\s\u00a0]+)\s*(km|kilometers?|kilometres?|miles?|mi)\b",
+    r"(\d(?:[\d.,\s\u00a0]*\d)?)\s*(km|kilometers?|kilometres?|miles?|mi)\b",
     re.IGNORECASE,
 )
 
@@ -435,27 +438,31 @@ def _query_tokens_match(hay: str, query: str) -> bool:
     return _text_matches_any(hay, [q])
 
 
+def _query_matches_search(hay: str, search: SearchConfig) -> bool:
+    hybrid = bool(HYBRID_QUERY_RE.search(search.query) or search.powertrain_any)
+    return any(
+        _query_tokens_match(hay, HYBRID_QUERY_RE.sub("", query).strip() if hybrid else query)
+        for query in search.all_queries()
+    )
+
+
 def filter_rejection_reason(
     listing: Listing,
     search: SearchConfig,
     location_keywords: list[str],
 ) -> str | None:
     hay = listing.haystack()
+    model_hay = f"{listing.title} {listing.card_text}"
 
-    if search.must_include_any and not _text_matches_any(hay, search.must_include_any):
+    if search.must_include_any and not _text_matches_any(model_hay, search.must_include_any):
         return "model_keywords"
 
     if search.must_include_all and not _text_matches_all(hay, search.must_include_all):
         return "required_keywords"
 
     # Broad query variants must still include evidence of the requested powertrain.
-    if HYBRID_RE.search(search.query) and not HYBRID_RE.search(hay):
-        return "hybrid_not_confirmed"
-    if not any(_query_tokens_match(hay, query) for query in search.all_queries()):
+    if not _query_matches_search(model_hay, search):
         return "query_mismatch"
-
-    if search.powertrain_any and not _text_matches_any(hay, search.powertrain_any):
-        return "powertrain_keywords"
 
     if search.require_body_style and search.body_styles:
         if not _text_matches_any(hay, search.body_styles):
@@ -482,6 +489,14 @@ def filter_rejection_reason(
         if loc and loc not in {"ontario", "on", "canada"}:
             if not any(k.lower() in loc for k in location_keywords):
                 return "location_out_of_area"
+
+    if HYBRID_QUERY_RE.search(search.query):
+        if re.search(r"\b(?:not|non)[ -]+(?:a\s+)?hybrid\b", hay, re.IGNORECASE):
+            return "hybrid_not_confirmed"
+        if not HYBRID_RE.search(hay):
+            return "hybrid_not_confirmed"
+    if search.powertrain_any and not _text_matches_any(hay, search.powertrain_any):
+        return "powertrain_keywords"
 
     return None
 
@@ -515,11 +530,16 @@ class MarketplaceScraper:
         search_mode_locations: list[str] | None = None,
         market_areas: list[dict[str, Any]] | None = None,
         on_session_active: Callable[[], None] | None = None,
+        detail_cache: dict[str, dict[str, Any]] | None = None,
+        max_detail_pages: int = 30,
     ) -> list[Listing]:
         self.session_verified = False
         self.search_diagnostics = []
         observations: dict[str, dict[str, str | None]] = {search.name: {} for search in searches}
         logged_rejections: Counter = Counter()
+        checked_details: dict[str, Listing] = {}
+        detail_attempts = 0
+        cached_details = detail_cache or {}
         results: dict[str, Listing] = {}
         successful_pages = 0
         failed_pages = 0
@@ -593,6 +613,24 @@ class MarketplaceScraper:
                                 kept = 0
                                 for listing in batch:
                                     reason = filter_rejection_reason(listing, search, location_keywords)
+                                    if reason in {None, "hybrid_not_confirmed", "powertrain_keywords"}:
+                                        previous = checked_details.get(listing.listing_id)
+                                        if previous is not None:
+                                            self._copy_details(listing, previous)
+                                        elif self._restore_details(listing, cached_details.get(listing.listing_id)):
+                                            checked_details[listing.listing_id] = listing
+                                        elif detail_attempts < max_detail_pages:
+                                            detail_attempts += 1
+                                            try:
+                                                self._read_details(context, listing)
+                                            except FacebookSessionError:
+                                                session_healthy = False
+                                                raise
+                                            except Exception:
+                                                logger.exception("Could not read seller description for %s", listing.listing_id)
+                                            checked_details[listing.listing_id] = listing
+                                            time.sleep(delay_between_searches_sec)
+                                        reason = filter_rejection_reason(listing, search, location_keywords)
                                     seen = observations[search.name]
                                     if listing.listing_id not in seen or reason is None:
                                         seen[listing.listing_id] = reason
@@ -620,6 +658,8 @@ class MarketplaceScraper:
                                             prev.card_text = listing.card_text
                                         if listing.location and not prev.location:
                                             prev.location = listing.location
+                                        if listing.details_checked_at:
+                                            self._copy_details(prev, listing)
                                 logger.info(
                                     "[%s] q=%r @ %s/%s r=%skm → %d raw, %d kept (unique %d)",
                                     search.name,
@@ -649,6 +689,104 @@ class MarketplaceScraper:
             self.search_diagnostics.append(stats)
             logger.info("Search diagnostics: %s", json.dumps(stats))
         return list(results.values())
+
+    @staticmethod
+    def _copy_details(listing: Listing, previous: Listing) -> None:
+        for field in ("description", "safety", "safety_evidence", "details_checked_at"):
+            setattr(listing, field, getattr(previous, field))
+        if listing.mileage_km is None:
+            listing.mileage_km = previous.mileage_km
+
+    @staticmethod
+    def _restore_details(listing: Listing, saved: dict[str, Any] | None) -> bool:
+        if not saved or not saved.get("details_checked_at"):
+            return False
+        try:
+            checked = datetime.fromisoformat(saved["details_checked_at"])
+            now = datetime.now(timezone.utc)
+            if checked.tzinfo is None or not timedelta(0) <= now - checked < timedelta(hours=24):
+                return False
+        except (TypeError, ValueError):
+            return False
+        listing.description = saved.get("description") or ""
+        listing.safety, listing.safety_evidence = classify_safety(listing.description)
+        listing.details_checked_at = saved["details_checked_at"]
+        if listing.mileage_km is None:
+            listing.mileage_km = saved.get("mileage_km")
+        return True
+
+    def _read_details(self, context: BrowserContext, listing: Listing) -> None:
+        detail = context.new_page()
+        descriptions: list[str] = []
+
+        def collect(payload: Any) -> None:
+            for node in _walk(payload):
+                if str(node.get("id") or node.get("listing_id") or "") != listing.listing_id:
+                    continue
+                for key in ("redacted_description", "description", "listing_description"):
+                    value = node.get(key)
+                    if isinstance(value, dict):
+                        value = value.get("text")
+                    if isinstance(value, str) and value.strip():
+                        descriptions.append(value.strip())
+
+        def response_received(response) -> None:
+            if "graphql" not in response.url:
+                return
+            try:
+                for line in response.text().splitlines():
+                    try:
+                        collect(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+            except Exception:
+                return
+
+        detail.on("response", response_received)
+        try:
+            detail.goto(
+                f"https://www.facebook.com/marketplace/item/{listing.listing_id}",
+                wait_until="domcontentloaded", timeout=self.timeout_ms,
+            )
+            detail.wait_for_timeout(2000)
+            self._raise_if_session_problem(detail)
+            dom_description = detail.evaluate("""() => {
+                const roots = [...document.querySelectorAll('[role="main"], [role="dialog"]')];
+                for (const root of roots) {
+                    const lines = (root.innerText || '').split(/\\n/).map(s => s.trim());
+                    const start = lines.findIndex(s => /^(description|seller.s description|təsvir|açıqlama)$/i.test(s));
+                    if (start < 0) continue;
+                    const endLabels = /^(seller information|seller details|location|details|satıcı haqqında məlumat|satıcı məlumatları|yer|təfərrüatlar)$/i;
+                    const result = [];
+                    for (const line of lines.slice(start + 1)) {
+                        if (endLabels.test(line)) break;
+                        if (/^(see more|see less|daha çox|daha az)$/i.test(line)) continue;
+                        result.push(line);
+                    }
+                    if (result.join(' ').trim()) return result.join('\\n').slice(0, 12000);
+                }
+                return '';
+            }""")
+            for script in detail.locator('script[type="application/json"]').all()[:50]:
+                try:
+                    collect(json.loads(script.text_content(timeout=1000) or "{}"))
+                except Exception:
+                    continue
+            if isinstance(dom_description, str) and dom_description.strip():
+                descriptions.append(dom_description.strip())
+            if not descriptions:
+                logger.info("Seller description unavailable for %s; safety unknown", listing.listing_id)
+                return
+            listing.description = max(descriptions, key=len)[:12000]
+            listing.safety, listing.safety_evidence = classify_safety(listing.description)
+            listing.details_checked_at = datetime.now(timezone.utc).isoformat()
+            if listing.mileage_km is None:
+                listing.mileage_km = _parse_mileage_km(listing.description)
+            logger.info("Seller description checked for %s: safety=%s mileage=%s", listing.listing_id,
+                        listing.safety, listing.mileage_km)
+        finally:
+            detail.remove_listener("response", response_received)
+            detail.close()
 
     def _has_authenticated_data(self, page: Page, listings: list[Listing]) -> bool:
         # A saved cookie or an empty page alone does not prove Marketplace access.

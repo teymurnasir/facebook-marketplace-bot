@@ -29,6 +29,7 @@ class SessionNotificationsTest(unittest.TestCase):
         self.telegram = Mock()
         self.store = Mock()
         self.store.is_seen.return_value = False
+        self.store.all_findings.return_value = []
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(patch.dict(os.environ, {
@@ -40,6 +41,7 @@ class SessionNotificationsTest(unittest.TestCase):
         self.save = self.stack.enter_context(patch.object(self.scraper, "_save_storage_state"))
         self.scrape = self.stack.enter_context(patch.object(self.scraper, "_scrape_url",
                                                           return_value=[self.listing]))
+        self.stack.enter_context(patch.object(self.scraper, "_read_details"))
 
     def run_scan(self, notify=True):
         return main.run_once(self.scraper, self.store, self.telegram, self.cfg, notify=notify)
@@ -54,6 +56,22 @@ class SessionNotificationsTest(unittest.TestCase):
         self.assertEqual(sum("<b>Facebook session active</b>" in m for m in messages), 1)
         self.assertIn("Marketplace data verified", messages[-1])
         self.save.assert_called_once()
+
+    def test_detail_budget_and_deduplication_across_search_pages(self):
+        with patch.object(self.scraper, "_read_details") as read:
+            self.scraper.run_cycle([self.search], ["toronto"], [],
+                                   delay_between_searches_sec=0, max_detail_pages=1)
+        read.assert_called_once()
+
+    def test_cached_description_avoids_detail_page_request(self):
+        from datetime import datetime, timezone
+        saved = {"123": {"description": "No safety", "mileage_km": 150000,
+                         "details_checked_at": datetime.now(timezone.utc).isoformat()}}
+        with patch.object(self.scraper, "_read_details") as read:
+            rows = self.scraper.run_cycle([self.search], ["toronto"], [],
+                                         delay_between_searches_sec=0, detail_cache=saved)
+        read.assert_not_called()
+        self.assertEqual(rows[0].safety, "no")
 
     def test_raw_data_confirms_access_even_when_filters_reject_every_listing(self):
         self.search.must_include_all = ["hybrid"]

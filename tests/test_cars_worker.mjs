@@ -113,6 +113,7 @@ test("pathological titles are escaped and stay within Telegram message limits", 
   const rows = f.findings.slice(0, 5).map((row) => ({ ...row,
     title: "&<script>".repeat(100), search_name: "&".repeat(100),
     price: "&".repeat(100), location: "&".repeat(100),
+    safety: "yes", safety_evidence: "&".repeat(200),
   }));
   await f.request("/findings", { findings: rows });
   await f.cars();
@@ -127,6 +128,7 @@ test("cars preserves and displays captured price, year, mileage, location and da
   await f.request("/findings", { findings: [{ ...f.findings[0],
     price: "CA$2,500", price_amount: 2500, year: 2014, mileage_km: 220000,
     location: "North York, ON", last_seen_at: "2026-10-07 09:15:00",
+    safety: "no", safety_evidence: "No safety <certificate>",
   }] });
   await f.cars();
   const text = f.messages.at(-1).text;
@@ -136,6 +138,8 @@ test("cars preserves and displays captured price, year, mileage, location and da
   assert.match(text, /North York, ON/);
   assert.match(text, /First found: 2026-10-07 08:00 UTC/);
   assert.match(text, /Last seen: 2026-10-07 09:15 UTC/);
+  assert.match(text, /Safety: <b>no<\/b>/);
+  assert.match(text, /No safety &lt;certificate&gt;/);
 });
 
 test("older rows show missing details honestly and cannot inject HTML through dates", async () => {
@@ -149,5 +153,6 @@ test("older rows show missing details honestly and cannot inject HTML through da
   assert.match(text, /Year: 2012/);
   assert.match(text, /Mileage: not shown/);
   assert.match(text, /Last seen: not saved yet/);
+  assert.match(text, /Safety: <b>unknown<\/b>/);
   assert.doesNotMatch(text, /<script>/);
 });

@@ -22,6 +22,25 @@ class SearchFiltersTest(unittest.TestCase):
             with self.subTest(title=title):
                 self.assertTrue(matches_filters(replace(self.car, title=title), self.search, []))
 
+    def test_optima_searches_include_requested_variants_once(self):
+        queries = self.search.all_queries()
+        self.assertIn("kia optima huv", queries)
+        self.assertIn("kia optima hev", queries)
+        self.assertIn("kia optima phev", queries)
+        self.assertEqual(len(queries), len(set(queries)))
+
+    def test_description_can_confirm_hybrid_but_huv_alone_cannot(self):
+        car = replace(self.car, title="2014 Kia Optima", description="Hybrid engine. Safety included")
+        self.assertTrue(matches_filters(car, self.search, []))
+        car = replace(car, title="2014 Kia Optima HUV", description="")
+        self.assertEqual(filter_rejection_reason(car, self.search, []), "hybrid_not_confirmed")
+        car = replace(car, title="2014 Kia Optima", description="Non-hybrid model")
+        self.assertEqual(filter_rejection_reason(car, self.search, []), "hybrid_not_confirmed")
+
+    def test_description_references_to_other_models_do_not_match_a_wrong_car(self):
+        car = replace(self.car, title="2014 Honda Civic", description="Trading for Kia Optima Hybrid")
+        self.assertFalse(matches_filters(car, self.search, []))
+
     def test_broad_optima_query_does_not_accept_unconfirmed_gasoline_models(self):
         car = replace(self.car, title="2014 Kia Optima LX")
         self.assertEqual(filter_rejection_reason(car, self.search, []), "hybrid_not_confirmed")

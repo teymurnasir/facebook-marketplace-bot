@@ -108,6 +108,7 @@ def run_once(
         search_mode_locations=cfg["scraper"].get("search_mode_locations"),
         market_areas=areas,
         on_session_active=session_active,
+        detail_cache={row["listing_id"]: row for row in store.all_findings()},
     )
 
     if not scraper.session_verified and notify and telegram is not None:

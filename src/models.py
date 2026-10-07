@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any
 
 
@@ -26,8 +27,17 @@ class SearchConfig:
         seen: list[str] = []
         for q in [*(self.queries or []), self.query]:
             q = (q or "").strip()
-            if q and q not in seen:
+            if q and q.lower() not in {value.lower() for value in seen}:
                 seen.append(q)
+        if re.search(r"\boptima\b", self.query, re.IGNORECASE) and (
+            re.search(r"\b(?:hybrid|hev|phev|huv)\b", self.query, re.IGNORECASE)
+            or self.powertrain_any
+        ):
+            for query in ("kia optima hybrid", "optima hybrid", "kia optima hev",
+                          "optima hev", "kia optima phev", "kia optima huv",
+                          "kiaoptima hybrid", "kia optima"):
+                if query not in {value.lower() for value in seen}:
+                    seen.append(query)
         return seen or [self.query]
 
 
@@ -44,11 +54,15 @@ class Listing:
     mileage_km: int | None = None
     card_text: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
+    description: str = ""
+    safety: str = "unknown"
+    safety_evidence: str = ""
+    details_checked_at: str = ""
 
     def haystack(self) -> str:
         return " ".join(
             part
-            for part in (self.title, self.location, self.card_text, str(self.mileage_km or ""))
+            for part in (self.title, self.location, self.card_text, self.description, str(self.mileage_km or ""))
             if part
         )
 
@@ -64,6 +78,9 @@ class Listing:
             lines.append(f"⏱ {self.mileage_km:,} km")
         if self.location:
             lines.append(f"📍 {_escape(self.location)}")
+        lines.append(f"Safety: <b>{_escape(self.safety)}</b> (seller description)")
+        if self.safety_evidence:
+            lines.append(f"Seller: {_escape(self.safety_evidence)}")
         lines.append(f'🔗 <a href="{safe_url}">Open on Marketplace</a>')
         return "\n".join(lines)
 

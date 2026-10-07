@@ -24,12 +24,16 @@ class FindingsTest(unittest.TestCase):
                 self.assertIsNone(before["price_amount"])
                 car = Listing("123", "2012 Mazda 3", "CA$1,500", 1500, "North York, ON",
                               "https://www.facebook.com/marketplace/item/123", "Mazda",
-                              year=2012, mileage_km=210000)
+                              year=2012, mileage_km=210000, description="Safety included",
+                              safety="yes", safety_evidence="Safety included",
+                              details_checked_at="2026-10-07T10:00:00+00:00")
                 store.update_details(car)
                 after = store.all_findings()[0]
                 self.assertEqual(after["price_amount"], 1500)
                 self.assertEqual(after["mileage_km"], 210000)
                 self.assertEqual(after["location"], "North York, ON")
+                self.assertEqual(after["safety"], "yes")
+                self.assertEqual(after["description"], "Safety included")
                 self.assertEqual(after["first_seen_at"], before["first_seen_at"])
                 self.assertTrue(after["last_seen_at"])
                 self.assertTrue(store.is_seen("123"))
