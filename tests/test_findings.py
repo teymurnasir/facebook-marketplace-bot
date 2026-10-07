@@ -1,13 +1,51 @@
 import tempfile
 import unittest
+import sqlite3
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from src.settings_sync import publish_findings
 from src.storage import SeenStore
+from src.models import Listing
 
 
 class FindingsTest(unittest.TestCase):
+    def test_migrates_existing_database_and_enriches_without_re_notifying(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "seen.db"
+            with sqlite3.connect(path) as conn:
+                conn.execute("CREATE TABLE seen_listings (listing_id TEXT PRIMARY KEY, search_name TEXT, "
+                             "title TEXT, url TEXT, first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+                conn.execute("INSERT INTO seen_listings (listing_id, title) VALUES ('123', '2012 Mazda 3')")
+            store = SeenStore(path)
+            try:
+                before = store.all_findings()[0]
+                self.assertIsNone(before["price_amount"])
+                car = Listing("123", "2012 Mazda 3", "CA$1,500", 1500, "North York, ON",
+                              "https://www.facebook.com/marketplace/item/123", "Mazda",
+                              year=2012, mileage_km=210000)
+                store.update_details(car)
+                after = store.all_findings()[0]
+                self.assertEqual(after["price_amount"], 1500)
+                self.assertEqual(after["mileage_km"], 210000)
+                self.assertEqual(after["location"], "North York, ON")
+                self.assertEqual(after["first_seen_at"], before["first_seen_at"])
+                self.assertTrue(after["last_seen_at"])
+                self.assertTrue(store.is_seen("123"))
+                store.update_details(replace(car, price="Price n/a", price_amount=None,
+                                             mileage_km=None, location=""))
+                self.assertEqual(store.all_findings()[0]["price_amount"], 1500)
+                self.assertEqual(store.all_findings()[0]["mileage_km"], 210000)
+            finally:
+                store.close()
+            reopened = SeenStore(path)
+            try:
+                self.assertEqual(len(reopened.all_findings()), 1)
+                self.assertEqual(reopened.all_findings()[0]["price_amount"], 1500)
+            finally:
+                reopened.close()
+
     def test_exports_complete_history_including_old_rows_without_duplicates(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SeenStore(Path(directory) / "seen.db")

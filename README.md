@@ -82,10 +82,19 @@ checks reuse the scan pages and do not add extra Facebook requests. `--seed` sta
 silent. Disabling `TELEGRAM_SCAN_SUMMARY` hides only the completion summary.
 
 Send `/cars` in Telegram to browse all saved database findings, newest first,
-with Marketplace links and Previous/Next buttons. `/cars 2` opens page two.
+with price, year, mileage, location, first/last seen dates, Marketplace links,
+and Previous/Next buttons. Each page shows three cars. `/cars 2` opens page two.
 Each successful scan syncs the complete `seen.db` history to the Cloudflare bot;
 browsing does not start a Facebook scan. Old findings may include ads that have
 since been removed. Only authorized Telegram chats can view the list.
+Older saved findings are enriched when they reappear in a scan. Missing details
+are labeled explicitly; the bot does not guess prices or mileage. Enrichment
+does not re-send previously notified ads.
+
+Search variants are honored (including "Optima HEV" for a hybrid search), while
+hybrid searches still require hybrid/HEV/PHEV evidence in the listing card.
+Scan summaries include the number of inspected and matching cards per search
+and exclusion reasons when a search finds no matches.
 
 ## Tweaking searches
 

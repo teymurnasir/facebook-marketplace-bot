@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any
+
+from .models import Listing
 
 
 class SeenStore:
@@ -22,6 +25,13 @@ class SeenStore:
             )
             """
         )
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(seen_listings)")}
+        for name, sql_type in {
+            "price": "TEXT", "price_amount": "INTEGER", "year": "INTEGER",
+            "mileage_km": "INTEGER", "location": "TEXT", "last_seen_at": "TIMESTAMP",
+        }.items():
+            if name not in columns:
+                self._conn.execute(f"ALTER TABLE seen_listings ADD COLUMN {name} {sql_type}")
         self._conn.commit()
 
     def is_seen(self, listing_id: str) -> bool:
@@ -48,16 +58,37 @@ class SeenStore:
         )
         self._conn.commit()
 
-    def all_findings(self) -> list[dict[str, str]]:
+    def update_details(self, listing: Listing) -> None:
+        self._conn.execute(
+            """
+            UPDATE seen_listings SET
+                title = COALESCE(NULLIF(?, ''), title),
+                url = COALESCE(NULLIF(?, ''), url),
+                price = COALESCE(NULLIF(NULLIF(?, ''), 'Price n/a'), price),
+                price_amount = COALESCE(?, price_amount),
+                year = COALESCE(?, year),
+                mileage_km = COALESCE(?, mileage_km),
+                location = COALESCE(NULLIF(?, ''), location),
+                last_seen_at = CURRENT_TIMESTAMP
+            WHERE listing_id = ?
+            """,
+            (listing.title, listing.url, listing.price, listing.price_amount, listing.year,
+             listing.mileage_km, listing.location, listing.listing_id),
+        )
+        self._conn.commit()
+
+    def all_findings(self) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             """
-            SELECT listing_id, search_name, title, url, first_seen_at
+            SELECT listing_id, search_name, title, url, first_seen_at,
+                   price, price_amount, year, mileage_km, location, last_seen_at
             FROM seen_listings
             ORDER BY first_seen_at DESC, listing_id DESC
             """
         ).fetchall()
-        fields = ("listing_id", "search_name", "title", "url", "first_seen_at")
-        return [dict(zip(fields, (str(value or "") for value in row))) for row in rows]
+        fields = ("listing_id", "search_name", "title", "url", "first_seen_at",
+                  "price", "price_amount", "year", "mileage_km", "location", "last_seen_at")
+        return [dict(zip(fields, row)) for row in rows]
 
     def close(self) -> None:
         self._conn.close()

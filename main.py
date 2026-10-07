@@ -34,6 +34,15 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("marketplace-bot")
 
+REJECTION_LABELS = {
+    "model_keywords": "different model", "required_keywords": "required description missing",
+    "hybrid_not_confirmed": "hybrid not stated", "query_mismatch": "search wording mismatch",
+    "powertrain_keywords": "different powertrain", "body_style": "different body style",
+    "year_out_of_range": "outside year range", "price_out_of_range": "outside price range",
+    "mileage_missing": "mileage not shown", "mileage_too_high": "mileage above limit",
+    "location_out_of_area": "outside selected area",
+}
+
 
 def env_bool(name: str, default: bool = True) -> bool:
     raw = os.getenv(name)
@@ -112,8 +121,8 @@ def run_once(
     new_count = 0
     for listing in listings:
         if not ignore_seen and store.is_seen(listing.listing_id):
+            store.update_details(listing)
             continue
-        new_count += 1
         logger.info("NEW: %s | %s | %s", listing.title, listing.price, listing.url)
         if notify and telegram is not None:
             ok = telegram.send_listing(listing)
@@ -126,6 +135,8 @@ def run_once(
             title=listing.title,
             url=listing.url,
         )
+        store.update_details(listing)
+        new_count += 1
 
     if settings_enabled():
         try:
@@ -146,6 +157,20 @@ def run_once(
             if scraper.session_verified
             else "Facebook status not verified."
         )
+        search_lines = []
+        for stats in scraper.search_diagnostics:
+            search_lines.append(
+                f"{_escape_tg(stats['name'])}: {stats['matched']} matching "
+                f"from {stats['inspected']} unique cards."
+            )
+            if stats["matched"] == 0 and stats["rejected"]:
+                reasons = ", ".join(
+                    f"{_escape_tg(REJECTION_LABELS.get(reason, reason))}: {count}"
+                    for reason, count in stats["rejected"].items()
+                )
+                search_lines.append(f"Excluded: {reasons}.")
+        if search_lines:
+            status += "\n\n" + "\n".join(search_lines)
         if new_count:
             telegram.send_text(
                 f"{prefix} finished — <b>{new_count}</b> listing(s) sent above.\n{status}"

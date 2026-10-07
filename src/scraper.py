@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+from collections import Counter
 from typing import Any, Callable
 from urllib.parse import urlencode, urlparse
 
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 ITEM_ID_RE = re.compile(r"/marketplace/item/(\d+)")
 YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+HYBRID_RE = re.compile(r"\b(?:hybrid|hev|phev)\b", re.IGNORECASE)
 PRICE_RE = re.compile(r"[\d,]+")
 MILEAGE_RE = re.compile(
     r"([\d.,\s\u00a0]+)\s*(km|kilometers?|kilometres?|miles?|mi)\b",
@@ -428,56 +430,62 @@ def _query_tokens_match(hay: str, query: str) -> bool:
     words = [w for w in re.split(r"\s+", q) if len(w) >= 3]
     if len(words) >= 2:
         return _text_matches_all(hay, words)
-    return True
+    return _text_matches_any(hay, [q])
 
 
-def matches_filters(
+def filter_rejection_reason(
     listing: Listing,
     search: SearchConfig,
     location_keywords: list[str],
-) -> bool:
+) -> str | None:
     hay = listing.haystack()
 
     if search.must_include_any and not _text_matches_any(hay, search.must_include_any):
-        return False
+        return "model_keywords"
 
     if search.must_include_all and not _text_matches_all(hay, search.must_include_all):
-        return False
+        return "required_keywords"
 
-    # Always enforce the primary query tokens (custom search safety net).
-    if not _query_tokens_match(hay, search.query):
-        return False
+    # Broad query variants must still include evidence of the requested powertrain.
+    if HYBRID_RE.search(search.query) and not HYBRID_RE.search(hay):
+        return "hybrid_not_confirmed"
+    if not any(_query_tokens_match(hay, query) for query in search.all_queries()):
+        return "query_mismatch"
 
     if search.powertrain_any and not _text_matches_any(hay, search.powertrain_any):
-        return False
+        return "powertrain_keywords"
 
     if search.require_body_style and search.body_styles:
         if not _text_matches_any(hay, search.body_styles):
-            return False
+            return "body_style"
 
     if listing.year is not None:
         if listing.year < search.min_year or listing.year > search.max_year:
-            return False
+            return "year_out_of_range"
 
     if listing.price_amount is not None:
         if listing.price_amount < search.min_price or listing.price_amount > search.max_price:
-            return False
+            return "price_out_of_range"
 
     if search.require_mileage and listing.mileage_km is None:
-        return False
+        return "mileage_missing"
 
     if search.max_mileage_km is not None and listing.mileage_km is not None:
         if listing.mileage_km > search.max_mileage_km:
-            return False
+            return "mileage_too_high"
 
     if location_keywords:
         loc = (listing.location or "").strip().lower()
         # Empty / generic location: keep (FB often omits city on cards)
         if loc and loc not in {"ontario", "on", "canada"}:
             if not any(k.lower() in loc for k in location_keywords):
-                return False
+                return "location_out_of_area"
 
-    return True
+    return None
+
+
+def matches_filters(listing: Listing, search: SearchConfig, location_keywords: list[str]) -> bool:
+    return filter_rejection_reason(listing, search, location_keywords) is None
 
 
 class MarketplaceScraper:
@@ -491,6 +499,7 @@ class MarketplaceScraper:
         self.headless = headless
         self.timeout_ms = timeout_ms
         self.session_verified = False
+        self.search_diagnostics: list[dict[str, Any]] = []
 
     def run_cycle(
         self,
@@ -506,6 +515,9 @@ class MarketplaceScraper:
         on_session_active: Callable[[], None] | None = None,
     ) -> list[Listing]:
         self.session_verified = False
+        self.search_diagnostics = []
+        observations: dict[str, dict[str, str | None]] = {search.name: {} for search in searches}
+        logged_rejections: Counter = Counter()
         results: dict[str, Listing] = {}
         successful_pages = 0
         failed_pages = 0
@@ -578,9 +590,19 @@ class MarketplaceScraper:
 
                                 kept = 0
                                 for listing in batch:
-                                    if not matches_filters(
-                                        listing, search, location_keywords
-                                    ):
+                                    reason = filter_rejection_reason(listing, search, location_keywords)
+                                    seen = observations[search.name]
+                                    if listing.listing_id not in seen or reason is None:
+                                        seen[listing.listing_id] = reason
+                                    if reason is not None:
+                                        key = (search.name, reason)
+                                        if logged_rejections[key] < 3:
+                                            logger.info(
+                                                "Rejected [%s] reason=%s title=%r price=%r year=%s mileage=%s",
+                                                search.name, reason, listing.title, listing.price,
+                                                listing.year, listing.mileage_km,
+                                            )
+                                            logged_rejections[key] += 1
                                         continue
                                     kept += 1
                                     prev = results.get(listing.listing_id)
@@ -616,6 +638,14 @@ class MarketplaceScraper:
 
         if failed_pages and not successful_pages:
             raise RuntimeError("All Marketplace pages failed to load; Facebook status could not be verified.")
+        for name, seen in observations.items():
+            stats = {
+                "name": name, "inspected": len(seen),
+                "matched": sum(reason is None for reason in seen.values()),
+                "rejected": dict(Counter(reason for reason in seen.values() if reason is not None)),
+            }
+            self.search_diagnostics.append(stats)
+            logger.info("Search diagnostics: %s", json.dumps(stats))
         return list(results.values())
 
     def _has_authenticated_data(self, page: Page, listings: list[Listing]) -> bool:

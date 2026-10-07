@@ -120,7 +120,7 @@ def ack_pending_scan(requested_at: Any) -> None:
         res.raise_for_status()
 
 
-def publish_findings(findings: list[dict[str, str]]) -> bool:
+def publish_findings(findings: list[dict[str, Any]]) -> bool:
     if not settings_enabled():
         return False
     with httpx.Client(timeout=30.0, trust_env=False) as client:

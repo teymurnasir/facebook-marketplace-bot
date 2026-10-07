@@ -16,7 +16,7 @@ const HELP = new Set(["/start", "/help"]);
 const ID = new Set(["/id", "/chatid"]);
 const SETTINGS = new Set(["/settings", "/filters", "/config"]);
 const CUSTOM = new Set(["/customsearch", "/custom", "/oneshot"]);
-const CARS_PAGE_SIZE = 5;
+const CARS_PAGE_SIZE = 3;
 
 const CANADA_NOTE = "🇨🇦 <b>Canada only</b> — locations & prices are for Canadian Marketplace.";
 
@@ -106,6 +106,17 @@ function shortText(value, length) {
   return chars.length > length ? chars.slice(0, length - 3).join("") + "..." : chars.join("");
 }
 
+function detailNumber(value) {
+  if (value == null || value === "" || typeof value === "boolean") return null;
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0 && number <= 1e12 ? number : null;
+}
+
+function findingDate(value) {
+  const match = String(value || "").match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+  return match ? `${match[1]} ${match[2]} UTC` : "not saved yet";
+}
+
 async function showFindingsPage(env, chatId, requestedPage = 0, messageId = null) {
   const raw = await env.SETTINGS.get("findings");
   const snapshot = raw ? JSON.parse(raw) : null;
@@ -124,8 +135,20 @@ async function showFindingsPage(env, chatId, requestedPage = 0, messageId = null
       const title = escapeHtml(shortText(car.title || "Marketplace listing", 80));
       const search = escapeHtml(shortText(car.search_name, 24));
       const link = `https://www.facebook.com/marketplace/item/${car.listing_id}`;
-      lines.push(`${start + index + 1}. <a href="${link}">${title}</a>`);
-      if (search) lines.push(search);
+      const amount = detailNumber(car.price_amount);
+      const price = amount != null
+        ? `CA$${amount.toLocaleString("en-CA")}`
+        : escapeHtml(shortText(car.price || "not saved yet", 32));
+      const year = detailNumber(car.year) || String(car.title || "").match(/\b(?:19|20)\d{2}\b/)?.[0];
+      const mileage = detailNumber(car.mileage_km);
+      const location = escapeHtml(shortText(car.location || "not shown", 48));
+      lines.push(`${start + index + 1}. <b><a href="${link}">${title}</a></b>`);
+      if (search) lines.push(`Search: ${search}`);
+      lines.push(`Price: <b>${price}</b> | Year: ${year || "not shown"}`);
+      lines.push(`Mileage: ${mileage == null ? "not shown" : mileage.toLocaleString("en-CA") + " km"}`);
+      lines.push(`Location: ${location}`);
+      lines.push(`First found: ${findingDate(car.first_seen_at)}`);
+      lines.push(`Last seen: ${findingDate(car.last_seen_at)}`);
       lines.push("");
     }
     lines.push("Saved history; some ads may no longer be available.");
@@ -1682,6 +1705,12 @@ export default {
           search_name: String(row.search_name || ""),
           url: `https://www.facebook.com/marketplace/item/${listingId}`,
           first_seen_at: String(row.first_seen_at || ""),
+          price: String(row.price || ""),
+          price_amount: detailNumber(row.price_amount),
+          year: detailNumber(row.year),
+          mileage_km: detailNumber(row.mileage_km),
+          location: String(row.location || ""),
+          last_seen_at: String(row.last_seen_at || ""),
         });
       }
       const snapshot = JSON.stringify({ findings, updated_at: new Date().toISOString() });

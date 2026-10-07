@@ -72,19 +72,19 @@ test("cars command and navigation reach every saved finding", async () => {
   await f.cars("/cars@MyBot");
   assert.match(f.messages.at(-1).text, /Saved cars: 12/);
   assert.match(f.messages.at(-1).text, /Car 0/);
-  assert.doesNotMatch(f.messages.at(-1).text, /Car 5/);
+  assert.doesNotMatch(f.messages.at(-1).text, /Car 3/);
   assert.equal(f.messages.at(-1).reply_markup.inline_keyboard[0][0].callback_data, "cars:page:1");
   await f.request("/", { callback_query: {
     id: "callback", data: "cars:page:1", message: { message_id: 9, chat: { id: 123 } },
   } });
   assert.equal(f.messages.at(-1).method, "editMessageText");
+  assert.match(f.messages.at(-1).text, /Car 3/);
   assert.match(f.messages.at(-1).text, /Car 5/);
-  assert.match(f.messages.at(-1).text, /Car 9/);
-  await f.cars("/cars 3");
+  await f.cars("/cars 4");
   assert.match(f.messages.at(-1).text, /Car 10/);
   assert.match(f.messages.at(-1).text, /Car 11/);
   await f.cars("/cars 999999");
-  assert.match(f.messages.at(-1).text, /Page 3\/3/);
+  assert.match(f.messages.at(-1).text, /Page 4\/4/);
 });
 
 test("unauthorized commands and callbacks do not disclose findings", async () => {
@@ -112,6 +112,7 @@ test("pathological titles are escaped and stay within Telegram message limits", 
   const f = await fixture();
   const rows = f.findings.slice(0, 5).map((row) => ({ ...row,
     title: "&<script>".repeat(100), search_name: "&".repeat(100),
+    price: "&".repeat(100), location: "&".repeat(100),
   }));
   await f.request("/findings", { findings: rows });
   await f.cars();
@@ -119,4 +120,34 @@ test("pathological titles are escaped and stay within Telegram message limits", 
   assert.ok(text.length < 4096);
   assert.ok(text.includes("&lt;script&gt;"));
   assert.ok(!text.includes("<script>"));
+});
+
+test("cars preserves and displays captured price, year, mileage, location and dates", async () => {
+  const f = await fixture();
+  await f.request("/findings", { findings: [{ ...f.findings[0],
+    price: "CA$2,500", price_amount: 2500, year: 2014, mileage_km: 220000,
+    location: "North York, ON", last_seen_at: "2026-10-07 09:15:00",
+  }] });
+  await f.cars();
+  const text = f.messages.at(-1).text;
+  assert.match(text, /CA\$2,500/);
+  assert.match(text, /Year: 2014/);
+  assert.match(text, /220,000 km/);
+  assert.match(text, /North York, ON/);
+  assert.match(text, /First found: 2026-10-07 08:00 UTC/);
+  assert.match(text, /Last seen: 2026-10-07 09:15 UTC/);
+});
+
+test("older rows show missing details honestly and cannot inject HTML through dates", async () => {
+  const f = await fixture();
+  await f.request("/findings", { findings: [{ ...f.findings[0],
+    title: "2012 Mazda 3", first_seen_at: "<script>bad</script>",
+  }] });
+  await f.cars();
+  const text = f.messages.at(-1).text;
+  assert.match(text, /Price: <b>not saved yet<\/b>/);
+  assert.match(text, /Year: 2012/);
+  assert.match(text, /Mileage: not shown/);
+  assert.match(text, /Last seen: not saved yet/);
+  assert.doesNotMatch(text, /<script>/);
 });
