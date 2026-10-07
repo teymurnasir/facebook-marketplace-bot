@@ -750,17 +750,26 @@ class MarketplaceScraper:
             )
             detail.wait_for_timeout(2000)
             self._raise_if_session_problem(detail)
+            for label in ("See more", "Ətraflı bax", "Daha çox"):
+                try:
+                    button = detail.get_by_role("main").get_by_text(label, exact=True)
+                    if button.count() and button.first.is_visible():
+                        button.first.click(timeout=1000)
+                        detail.wait_for_timeout(300)
+                        break
+                except Exception:
+                    continue
             dom_description = detail.evaluate("""() => {
                 const roots = [...document.querySelectorAll('[role="main"], [role="dialog"]')];
                 for (const root of roots) {
                     const lines = (root.innerText || '').split(/\\n/).map(s => s.trim());
-                    const start = lines.findIndex(s => /^(description|seller.s description|təsvir|açıqlama)$/i.test(s));
+                    const start = lines.findIndex(s => /^(description|seller.s description|satıcının təsviri|təsvir|açıqlama)$/i.test(s));
                     if (start < 0) continue;
                     const endLabels = /^(seller information|seller details|location|details|satıcı haqqında məlumat|satıcı məlumatları|yer|təfərrüatlar)$/i;
                     const result = [];
                     for (const line of lines.slice(start + 1)) {
-                        if (endLabels.test(line)) break;
-                        if (/^(see more|see less|daha çox|daha az)$/i.test(line)) continue;
+                        if (endLabels.test(line) || /(?:məkan təxminidir|location is approximate)/i.test(line)) break;
+                        if (/^(see more|see less|daha çox|daha az|ətraflı bax)$/i.test(line)) continue;
                         result.push(line);
                     }
                     if (result.join(' ').trim()) return result.join('\\n').slice(0, 12000);
@@ -781,7 +790,15 @@ class MarketplaceScraper:
             listing.safety, listing.safety_evidence = classify_safety(listing.description)
             listing.details_checked_at = datetime.now(timezone.utc).isoformat()
             if listing.mileage_km is None:
-                listing.mileage_km = _parse_mileage_km(listing.description)
+                vehicle_text = detail.evaluate("""() => {
+                    const root = document.querySelector('[role="main"]');
+                    const lines = (root?.innerText || '').split(/\\n/).map(s => s.trim());
+                    const start = lines.findIndex(s => /^(about this vehicle|bu nəqliyyat vasitəsi haqqında)$/i.test(s));
+                    if (start < 0) return '';
+                    const end = lines.findIndex((s, i) => i > start && /^(description|seller.s description|satıcının təsviri|təsvir)$/i.test(s));
+                    return lines.slice(start + 1, end < 0 ? start + 15 : end).join('\\n');
+                }""")
+                listing.mileage_km = _parse_mileage_km(vehicle_text) or _parse_mileage_km(listing.description)
             logger.info("Seller description checked for %s: safety=%s mileage=%s", listing.listing_id,
                         listing.safety, listing.mileage_km)
         finally:

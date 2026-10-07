@@ -48,10 +48,11 @@ class DescriptionCheckTest(unittest.TestCase):
         self.page.locator.return_value.all.return_value = []
 
     def test_description_populates_safety_and_mileage(self):
+        self.page.evaluate.side_effect = ["Safety included. Hybrid. 220,000 km", "250,000 km driven"]
         with patch.object(self.scraper, "_raise_if_session_problem"):
             self.scraper._read_details(self.context, self.car)
         self.assertEqual(self.car.safety, "yes")
-        self.assertEqual(self.car.mileage_km, 220000)
+        self.assertEqual(self.car.mileage_km, 250000)
         self.assertTrue(self.car.details_checked_at)
         self.page.close.assert_called_once()
 

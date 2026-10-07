@@ -2,6 +2,11 @@ name: Sync saved cars database
 
 on:
   workflow_dispatch:
+    inputs:
+      refresh_details:
+        description: "Read up to 30 saved car descriptions before syncing (no new search)"
+        type: boolean
+        default: false
 
 concurrency:
   group: marketplace-scan
@@ -10,7 +15,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,6 +23,28 @@ jobs:
           python-version: "3.12"
       - name: Install sync dependencies
         run: pip install httpx PyYAML
+      - name: Install description reader
+        if: inputs.refresh_details
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps
+      - name: Restore saved Facebook session
+        if: inputs.refresh_details
+        uses: actions/cache/restore@v4
+        with:
+          path: storage_state.json
+          key: fb-session-v2-${{ github.run_id }}
+          restore-keys: |
+            fb-session-v2-
+      - name: Restore session secret if no cached session
+        if: inputs.refresh_details
+        env:
+          FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
+        run: |
+          if [ ! -s storage_state.json ]; then
+            test -n "$FACEBOOK_STORAGE_STATE_B64"
+            echo "$FACEBOOK_STORAGE_STATE_B64" | base64 --decode > storage_state.json
+          fi
       - name: Restore existing scan database
         uses: actions/cache/restore@v4
         with:
@@ -30,4 +57,17 @@ jobs:
         env:
           SETTINGS_CONFIG_URL: ${{ secrets.SETTINGS_CONFIG_URL }}
           SETTINGS_CONFIG_TOKEN: ${{ secrets.SETTINGS_CONFIG_TOKEN }}
+          REFRESH_CAR_DETAILS: ${{ inputs.refresh_details }}
         run: python -m scripts.sync_findings
+      - name: Save enriched car database
+        if: always() && inputs.refresh_details
+        uses: actions/cache/save@v4
+        with:
+          path: data/seen.db
+          key: seen-db-v4-${{ github.run_id }}
+      - name: Save refreshed Facebook session
+        if: success() && inputs.refresh_details
+        uses: actions/cache/save@v4
+        with:
+          path: storage_state.json
+          key: fb-session-v2-${{ github.run_id }}
