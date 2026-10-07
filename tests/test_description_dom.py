@@ -13,7 +13,8 @@ class DescriptionDomTest(unittest.TestCase):
             try:
                 context = browser.new_context()
                 context.route("**/marketplace/item/123", lambda route: route.fulfill(
-                    content_type="text/html", body="""
+                    content_type="text/html; charset=utf-8", body="""
+                    <meta charset="utf-8">
                     <main role="main">
                       <h1>2014 Kia Optima</h1>
                       <h2>Bu nəqliyyat vasitəsi haqqında</h2>
