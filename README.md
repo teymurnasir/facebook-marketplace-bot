@@ -105,10 +105,17 @@ Descriptions are cached for 24 hours, with up to 30 detail-page visits per scan;
 unavailable or unchecked descriptions remain unknown. Description mileage and
 hybrid evidence are also used when the search card does not provide them.
 
-Optima hybrid searches automatically include `kia optima hybrid`, `optima hybrid`,
-`kia optima hev`, `optima hev`, `kia optima phev`, `kia optima huv`,
-`kiaoptima hybrid`, and `kia optima`, plus any configured variants. `HUV` is a
-search spelling variant; it alone is not evidence that a vehicle is hybrid.
+Every saved, manual, and custom car search uses the same automatic query expansion:
+compact names, model-number spacing/hyphens, and brand-omitted model names when
+the make is recognized and the model is not purely numeric. For example,
+`ford f150` also searches `ford f 150`, `ford f-150`, and `f150`;
+`toyota camry hybrid` also searches `camry hybrid`, `toyota camry hev`, and
+`toyota camry`. Hybrid evidence is still required, and a PHEV search requires
+plug-in evidence. `HUV` is only a search spelling, never hybrid evidence.
+Expansion stops at ten total queries; explicitly configured aliases are always
+preserved even if they exceed ten. Unknown typos, translations, and alternative
+model names can be added to `queries`; the bot cannot guarantee every possible ad.
+Existing year, price, mileage, area, and custom keyword filters remain in effect.
 
 ## Tweaking searches
 

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import re
 from typing import Any
+
+from .search_queries import expand_queries, hybrid_requested, model_query
 
 
 @dataclass
@@ -24,21 +25,19 @@ class SearchConfig:
     require_mileage: bool = False
 
     def all_queries(self) -> list[str]:
-        seen: list[str] = []
-        for q in [*(self.queries or []), self.query]:
-            q = (q or "").strip()
-            if q and q.lower() not in {value.lower() for value in seen}:
-                seen.append(q)
-        if re.search(r"\boptima\b", self.query, re.IGNORECASE) and (
-            re.search(r"\b(?:hybrid|hev|phev|huv)\b", self.query, re.IGNORECASE)
-            or self.powertrain_any
+        return expand_queries(self.query, self.queries, self.powertrain_any)
+
+    def keyword_filters(self) -> tuple[list[str], list[str]]:
+        base = model_query(self.query, hybrid_requested(self.query, self.powertrain_any))
+        legacy_any = {base, base.replace(" ", "")}
+        # Older Telegram wizards duplicated the primary query as keyword rules.
+        # Replace only that exact generated pair; retain genuine custom constraints.
+        if base and {v.lower() for v in self.must_include_any} == legacy_any and (
+            [v.lower() for v in self.must_include_all] == base.split()
+            or (len(base.split()) == 1 and not self.must_include_all)
         ):
-            for query in ("kia optima hybrid", "optima hybrid", "kia optima hev",
-                          "optima hev", "kia optima phev", "kia optima huv",
-                          "kiaoptima hybrid", "kia optima"):
-                if query not in {value.lower() for value in seen}:
-                    seen.append(query)
-        return seen or [self.query]
+            return [], []
+        return self.must_include_any, self.must_include_all
 
 
 @dataclass

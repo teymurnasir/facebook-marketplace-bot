@@ -13,13 +13,13 @@ from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_
 
 from .models import Listing, SearchConfig
 from .listing_details import classify_safety
+from .search_queries import MAKES, MAKE_ALIASES, PLUGIN_RE, hybrid_requested, model_query, split_make
 
 logger = logging.getLogger(__name__)
 
 ITEM_ID_RE = re.compile(r"/marketplace/item/(\d+)")
 YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 HYBRID_RE = re.compile(r"\b(?:hybrid|hev|phev)\b", re.IGNORECASE)
-HYBRID_QUERY_RE = re.compile(r"\b(?:hybrid|hev|phev|huv)\b", re.IGNORECASE)
 PRICE_RE = re.compile(r"[\d,]+")
 MILEAGE_RE = re.compile(
     r"(\d(?:[\d.,\s\u00a0]*\d)?)\s*(km|kilometers?|kilometres?|miles?|mi)\b",
@@ -420,28 +420,35 @@ def _extract_listings_from_dom(page: Page, search_name: str) -> list[Listing]:
 
 
 def _query_tokens_match(hay: str, query: str) -> bool:
-    """
-    Multi-word queries must match as a phrase/compact form, or include every
-    significant token (len>=3). Prevents "kia forte" matching "kia sorento".
-    """
-    q = (query or "").strip().lower()
-    if not q:
+    words = re.findall(r"[a-z0-9]+", query.lower())
+    if not words:
+        return False
+    phrase = r"(?<![a-z0-9])" + r"[^a-z0-9]*".join(map(re.escape, words)) + r"(?![a-z0-9])"
+    if re.search(phrase, hay.lower()):
         return True
-    low = hay.lower()
-    compact_hay = _normalize_alnum(hay)
-    compact_q = _normalize_alnum(q)
-    if q in low or (compact_q and compact_q in compact_hay):
-        return True
-    words = [w for w in re.split(r"\s+", q) if len(w) >= 3]
-    if len(words) >= 2:
-        return _text_matches_all(hay, words)
-    return _text_matches_any(hay, [q])
+
+    def tokens(text: str) -> str:
+        separated = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", text.lower())
+        return " ".join(re.findall(r"[a-z0-9]+", separated))
+
+    # Numeric and one-letter model tokens are significant, too.
+    return f" {tokens(query)} " in f" {tokens(hay)} "
 
 
 def _query_matches_search(hay: str, search: SearchConfig) -> bool:
-    hybrid = bool(HYBRID_QUERY_RE.search(search.query) or search.powertrain_any)
+    hybrid = hybrid_requested(search.query, search.powertrain_any)
+    allowed_makes: set[str] = set()
+    for query in [search.query, *search.queries]:
+        make, _ = split_make(model_query(query, hybrid))
+        if make:
+            allowed_makes.update((make, *MAKE_ALIASES.get(make, ())))
+    title = " ".join(re.findall(r"[a-z0-9]+", YEAR_RE.sub("", hay, count=1).lower()))
+    # Brandless aliases must not accept another explicitly named manufacturer.
+    title_make = next((make for make in MAKES if title.startswith(make + " ")), "")
+    if allowed_makes and title_make and title_make not in allowed_makes:
+        return False
     return any(
-        _query_tokens_match(hay, HYBRID_QUERY_RE.sub("", query).strip() if hybrid else query)
+        _query_tokens_match(hay, model_query(query, hybrid))
         for query in search.all_queries()
     )
 
@@ -454,14 +461,15 @@ def filter_rejection_reason(
     hay = listing.haystack()
     model_hay = f"{listing.title} {listing.card_text}"
 
-    if search.must_include_any and not _text_matches_any(model_hay, search.must_include_any):
+    include_any, include_all = search.keyword_filters()
+    if include_any and not _text_matches_any(model_hay, include_any):
         return "model_keywords"
 
-    if search.must_include_all and not _text_matches_all(hay, search.must_include_all):
+    if include_all and not _text_matches_all(hay, include_all):
         return "required_keywords"
 
     # Broad query variants must still include evidence of the requested powertrain.
-    if not _query_matches_search(model_hay, search):
+    if not _query_matches_search(listing.title or listing.card_text, search):
         return "query_mismatch"
 
     if search.require_body_style and search.body_styles:
@@ -490,11 +498,16 @@ def filter_rejection_reason(
             if not any(k.lower() in loc for k in location_keywords):
                 return "location_out_of_area"
 
-    if HYBRID_QUERY_RE.search(search.query):
+    if hybrid_requested(search.query, search.powertrain_any):
         if re.search(r"\b(?:not|non)[ -]+(?:a\s+)?hybrid\b", hay, re.IGNORECASE):
             return "hybrid_not_confirmed"
-        if not HYBRID_RE.search(hay):
+        if not HYBRID_RE.search(hay) and not PLUGIN_RE.search(hay):
             return "hybrid_not_confirmed"
+        if PLUGIN_RE.search(search.query):
+            if not PLUGIN_RE.search(hay) or re.search(
+                r"\b(?:not|non)[ -]+(?:a\s+)?(?:phev|plug[ -]?in)\b", hay, re.I,
+            ):
+                return "hybrid_not_confirmed"
     if search.powertrain_any and not _text_matches_any(hay, search.powertrain_any):
         return "powertrain_keywords"
 

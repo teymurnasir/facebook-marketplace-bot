@@ -500,16 +500,7 @@ function buildSearchFromWizard(draft) {
   const query = (draft.query || draft.name || "").trim();
   const qLower = query.toLowerCase();
   const name = (draft.name || query).trim();
-  const hybrid = !!draft.hybrid || /\b(hybrid|hev|phev|huv)\b/i.test(qLower);
-  const modelQuery = hybrid ? qLower.replace(/\b(hybrid|hev|phev|huv)\b/g, "").replace(/\s+/g, " ").trim() : qLower;
-  const compact = qLower.replace(/\s+/g, "");
-  const words = modelQuery.split(/\s+/).filter(Boolean);
-  // Require the full phrase (or compact form). For multi-word queries also
-  // require every word so "kia forte" does not match "kia sorento".
-  const must_include_any = [modelQuery, modelQuery.replace(/\s+/g, "")].filter(
-    (v, i, arr) => v && arr.indexOf(v) === i
-  );
-  const must_include_all = words.length > 1 ? words : [];
+  const hybrid = !!draft.hybrid || /\b(hybrid|hev|phev|huv|plug[ -]?in)\b/i.test(qLower);
   const searches = {
     name,
     query: qLower,
@@ -519,8 +510,9 @@ function buildSearchFromWizard(draft) {
     min_price: draft.min_price ?? 0,
     max_price: draft.max_price ?? 999999,
     max_mileage_km: draft.max_mileage_km ?? 250000,
-    must_include_any,
-    must_include_all,
+    // Python expands model spellings and enforces model identity for every car.
+    must_include_any: [],
+    must_include_all: [],
     powertrain_any: hybrid
       ? ["hybrid", "hev", "phev", "plug-in", "plugin", "plug in"]
       : [],
@@ -528,12 +520,6 @@ function buildSearchFromWizard(draft) {
     require_body_style: false,
     require_mileage: false,
   };
-  if (compact && !searches.queries.includes(compact)) searches.queries.push(compact);
-  if (hybrid && /\boptima\b/.test(modelQuery)) {
-    searches.must_include_any = ["optima", "k5"];
-    searches.must_include_all = [];
-  }
-  if (!searches.must_include_any.length) searches.must_include_any = [qLower];
   return searches;
 }
 

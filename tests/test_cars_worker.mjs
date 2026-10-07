@@ -17,7 +17,7 @@ async function fixture() {
       return Response.json({ ok: true });
     },
   });
-  const mod = new vm.SourceTextModule(source, { context });
+  const mod = new vm.SourceTextModule(source + "\nexport { buildSearchFromWizard };", { context });
   await mod.link(async () => {
     const dependency = new vm.SyntheticModule(["default"], function () {
       this.setExport("default", config);
@@ -43,8 +43,25 @@ async function fixture() {
     listing_id: String(100 + index), title: `Car ${index}`, search_name: "Mazda",
     url: "https://untrusted.invalid/", first_seen_at: "2026-10-07 08:00:00",
   }));
-  return { values, messages, request, cars, findings };
+  return { values, messages, request, cars, findings, buildSearch: mod.namespace.buildSearchFromWizard };
 }
+
+test("saved and custom Telegram searches delegate all car models to general expansion", async () => {
+  const f = await fixture();
+  for (const query of ["kia optima hybrid", "toyota camry hybrid", "honda civic", "ford f150", "mazda3"]) {
+    const search = f.buildSearch({ query, min_year: 2010, max_year: 2020, min_price: 1000,
+      max_price: 3000, max_mileage_km: 200000 });
+    assert.equal(search.query, query);
+    assert.equal(search.queries.length, 1);
+    assert.equal(search.must_include_any.length, 0);
+    assert.equal(search.must_include_all.length, 0);
+    assert.equal(search.max_price, 3000);
+    assert.equal(search.max_mileage_km, 200000);
+    assert.equal(search.powertrain_any.length > 0, query.includes("hybrid"));
+  }
+  assert.ok(f.buildSearch({ query: "toyota camry", hybrid: true }).powertrain_any.includes("hev"));
+  assert.ok(f.buildSearch({ query: "outlander plug-in hybrid" }).powertrain_any.includes("phev"));
+});
 
 test("full authenticated snapshot preserves all rows and canonical links", async () => {
   const f = await fixture();
