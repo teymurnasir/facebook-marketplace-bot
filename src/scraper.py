@@ -373,7 +373,9 @@ def _extract_listings_from_dom(page: Page, search_name: str) -> list[Listing]:
                 and not YEAR_RE.fullmatch(ln)
                 and not _is_mileage_line(ln)
             ]
-            title = next((ln for ln in non_price if YEAR_RE.search(ln) or len(ln) > 3), None)
+            title = next((ln for ln in non_price if YEAR_RE.search(ln)), None)
+            if not title:
+                title = next((ln for ln in non_price if len(ln) > 3), None)
             if not title:
                 title = non_price[0] if non_price else f"Listing {listing_id}"
 

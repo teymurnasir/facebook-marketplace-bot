@@ -1,8 +1,9 @@
 import unittest
 from dataclasses import replace
+from unittest.mock import Mock
 
 from src.models import Listing, SearchConfig
-from src.scraper import filter_rejection_reason, matches_filters
+from src.scraper import _extract_listings_from_dom, filter_rejection_reason, matches_filters
 
 
 class SearchFiltersTest(unittest.TestCase):
@@ -40,6 +41,20 @@ class SearchFiltersTest(unittest.TestCase):
         for query in ("tesla", "kia forte"):
             search = SearchConfig(query, query, 2011, 2017, 1000, 3000)
             self.assertFalse(matches_filters(self.car, search, []))
+
+    def test_localized_badge_does_not_replace_vehicle_title_or_year(self):
+        page = Mock()
+        page.locator.return_value.count.return_value = 1
+        anchor = page.locator.return_value.nth.return_value
+        anchor.get_attribute.return_value = "/marketplace/item/123"
+        anchor.inner_text.return_value = (
+            "Just listed\nCA$ 2.800\n2015 Kia optima\nNorth York, ON"
+        )
+        rows = _extract_listings_from_dom(page, "Kia Optima Hybrid")
+        self.assertEqual(rows[0].title, "2015 Kia optima")
+        self.assertEqual(rows[0].year, 2015)
+        self.assertEqual(rows[0].price_amount, 2800)
+        self.assertEqual(rows[0].location, "North York, ON")
 
 
 if __name__ == "__main__":
