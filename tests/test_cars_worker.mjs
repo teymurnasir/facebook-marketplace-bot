@@ -78,8 +78,23 @@ test("only a newer verified scan resumes auto scans and old failures cannot re-p
   assert.deepEqual(await (await f.request("/session", { status: "inactive", scan_started_at: 2000 })).json(),
     { ok: true, applied: false });
   const tick = await f.request("/tick", {});
-  assert.equal((await tick.json()).started, true);
+  assert.equal((await tick.json()).skipped, "not_due");
+  assert.equal(f.dispatches.length, 0);
+  f.values.set("last_auto_scan_at", String(Date.now() - config.poll_interval_minutes * 60000 - 1000));
+  assert.equal((await (await f.request("/tick", {})).json()).started, true);
   assert.equal(f.dispatches.length, 1);
+});
+
+test("normal successful scans and stale reports do not move the timer's saved due time", async () => {
+  const f = await fixture();
+  f.values.set("last_auto_scan_at", "1000");
+  await f.request("/session", { status: "active", scan_started_at: 1000 });
+  await f.request("/session", { status: "active", scan_started_at: 2000 });
+  assert.equal(f.values.get("last_auto_scan_at"), "1000");
+  await f.request("/session", { status: "inactive", scan_started_at: 3000 });
+  await f.request("/session", { status: "active", scan_started_at: 2000 });
+  assert.equal(f.values.get("last_auto_scan_at"), "1000");
+  assert.equal(JSON.parse(f.values.get("facebook_session_status")).status, "inactive");
 });
 
 test("session writes require authentication and reject unknown or malformed states", async () => {

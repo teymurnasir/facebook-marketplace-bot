@@ -1729,6 +1729,10 @@ export default {
         scan_started_at: payload.scan_started_at,
         checked_at: new Date().toISOString(),
       };
+      if (previous.status === "inactive" && session.status === "active") {
+        // Give a verified recovery the full saved interval before the next auto scan.
+        await env.SETTINGS.put("last_auto_scan_at", String(Date.now()));
+      }
       await env.SETTINGS.put("facebook_session_status", JSON.stringify(session));
       return Response.json({ ok: true, applied: true });
     }

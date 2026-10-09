@@ -90,6 +90,7 @@ state; this command does not visit Facebook. To recover, log in locally with
 `/scan`. Updating the secret or queueing a scan does not itself clear the pause:
 a completed scan must read authenticated Marketplace data. Empty results,
 network errors, browser crashes, and stale scan reports cannot clear the guard.
+After verified recovery, the next automatic scan waits the full saved interval.
 The guard prevents repeated failed automatic attempts; it does not reactivate a
 Facebook account or guarantee that Facebook will accept a session indefinitely.
 
