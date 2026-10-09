@@ -135,3 +135,21 @@ def publish_findings(findings: list[dict[str, Any]]) -> bool:
         raise RuntimeError("The bot did not confirm the complete findings snapshot")
     logger.info("Published %d database findings for Telegram /cars", len(findings))
     return True
+
+
+def publish_session_status(status: str, scan_started_at: int) -> bool:
+    if status not in {"active", "inactive"}:
+        raise ValueError("Invalid Facebook session status")
+    if not settings_enabled():
+        return False
+    with httpx.Client(timeout=20.0, trust_env=False) as client:
+        res = client.post(
+            f"{_base_url()}/session",
+            headers=_headers(),
+            json={"status": status, "scan_started_at": scan_started_at},
+        )
+        res.raise_for_status()
+        result = res.json()
+    if not result.get("ok"):
+        raise RuntimeError("The bot did not confirm the Facebook session status")
+    return bool(result.get("applied"))

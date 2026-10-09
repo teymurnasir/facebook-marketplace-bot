@@ -6,12 +6,17 @@ import vm from "node:vm";
 const source = await readFile(new URL("../telegram-webhook/worker.js", import.meta.url), "utf8");
 const config = JSON.parse(await readFile(new URL("../telegram-webhook/default-config.json", import.meta.url), "utf8"));
 
-async function fixture() {
+async function fixture({ allowScans = false } = {}) {
   const values = new Map();
   const messages = [];
+  const dispatches = [];
   const context = vm.createContext({
     URL, Response, TextEncoder, structuredClone,
     fetch: async (url, options) => {
+      if (allowScans && String(url).startsWith("https://api.github.com/")) {
+        dispatches.push(JSON.parse(options.body));
+        return new Response(null, { status: 204 });
+      }
       assert.ok(String(url).startsWith("https://api.telegram.org/"), "Browsing cars must not dispatch scans");
       messages.push({ method: String(url).split("/").at(-1), ...JSON.parse(options.body) });
       return Response.json({ ok: true });
@@ -27,6 +32,7 @@ async function fixture() {
   await mod.evaluate();
   const env = {
     CONFIG_TOKEN: "test-config", TELEGRAM_CHAT_IDS: "123", TELEGRAM_BOT_TOKEN: "test-bot",
+    GITHUB_REPO: "test/repo", GITHUB_TOKEN: "test-github",
     SETTINGS: {
       get: async (key) => values.get(key) ?? null,
       put: async (key, value) => values.set(key, value),
@@ -43,8 +49,71 @@ async function fixture() {
     listing_id: String(100 + index), title: `Car ${index}`, search_name: "Mazda",
     url: "https://untrusted.invalid/", first_seen_at: "2026-10-07 08:00:00",
   }));
-  return { values, messages, request, cars, findings, buildSearch: mod.namespace.buildSearchFromWizard };
+  return { values, messages, dispatches, request, cars, findings, buildSearch: mod.namespace.buildSearchFromWizard };
 }
+
+test("confirmed login failure silently pauses repeated automatic ticks without changing settings or cars", async () => {
+  const f = await fixture();
+  await f.request("/findings", { findings: f.findings });
+  const findings = f.values.get("findings");
+  const interval = config.poll_interval_minutes;
+  const result = await f.request("/session", { status: "inactive", scan_started_at: 1000 });
+  assert.deepEqual(await result.json(), { ok: true, applied: true });
+  for (let i = 0; i < 3; i++) {
+    const tick = await f.request("/tick", {});
+    assert.deepEqual(await tick.json(), { ok: true, skipped: "facebook_login_needed", interval_min: interval });
+  }
+  assert.equal(f.messages.length, 0);
+  assert.equal(f.values.get("findings"), findings);
+  assert.equal(f.values.has("last_auto_scan_at"), false);
+});
+
+test("only a newer verified scan resumes auto scans and old failures cannot re-pause it", async () => {
+  const f = await fixture({ allowScans: true });
+  await f.request("/session", { status: "inactive", scan_started_at: 2000 });
+  assert.equal((await f.request("/session", { status: "active", scan_started_at: 1000 })).status, 200);
+  assert.equal(JSON.parse(f.values.get("facebook_session_status")).status, "inactive");
+  assert.deepEqual(await (await f.request("/session", { status: "active", scan_started_at: 3000 })).json(),
+    { ok: true, applied: true });
+  assert.deepEqual(await (await f.request("/session", { status: "inactive", scan_started_at: 2000 })).json(),
+    { ok: true, applied: false });
+  const tick = await f.request("/tick", {});
+  assert.equal((await tick.json()).started, true);
+  assert.equal(f.dispatches.length, 1);
+});
+
+test("session writes require authentication and reject unknown or malformed states", async () => {
+  const f = await fixture();
+  assert.equal((await f.request("/session", { status: "inactive", scan_started_at: 1000 }, "wrong")).status, 401);
+  for (const payload of [null, { status: "unknown", scan_started_at: 1000 },
+    { status: "active", scan_started_at: "1000" }, { status: "active", scan_started_at: -1 },
+    { status: "active", scan_started_at: Date.now() + 120000 }]) {
+    assert.equal((await f.request("/session", payload)).status, 400);
+  }
+  assert.equal(f.values.has("facebook_session_status"), false);
+});
+
+test("session command shows last-known state without starting a Facebook scan", async () => {
+  const f = await fixture();
+  await f.cars("/session", 999);
+  assert.equal(f.messages.at(-1).text, "Not authorized.");
+  await f.cars("/session");
+  assert.match(f.messages.at(-1).text, /has not been recorded/);
+  await f.request("/session", { status: "inactive", scan_started_at: 1000 });
+  await f.cars("/session@MyBot");
+  assert.match(f.messages.at(-1).text, /Automatic scans are paused/);
+  await f.request("/session", { status: "active", scan_started_at: 2000 });
+  await f.cars("/status");
+  assert.match(f.messages.at(-1).text, /not a live Facebook check/);
+});
+
+test("manual recovery scan remains available while paused but queueing does not clear the pause", async () => {
+  const f = await fixture({ allowScans: true });
+  await f.request("/session", { status: "inactive", scan_started_at: 1000 });
+  await f.cars("/scan");
+  assert.equal(f.dispatches.length, 1);
+  assert.equal(JSON.parse(f.values.get("facebook_session_status")).status, "inactive");
+});
 
 test("saved and custom Telegram searches delegate all car models to general expansion", async () => {
   const f = await fixture();

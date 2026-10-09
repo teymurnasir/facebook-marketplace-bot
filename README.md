@@ -81,6 +81,18 @@ reports **status not verified** rather than assuming Facebook is active. Session
 checks reuse the scan pages and do not add extra Facebook requests. `--seed` stays
 silent. Disabling `TELEGRAM_SCAN_SUMMARY` hides only the completion summary.
 
+For cloud scans, a confirmed login/checkpoint failure also records an inactive
+session in the Worker and pauses automatic dispatches without changing the saved
+interval or deleting findings. Repeated timer ticks stay silent while paused.
+Send `/session` (or `/status`) for the last recorded Facebook check and pause
+state; this command does not visit Facebook. To recover, log in locally with
+`python -m src.save_session`, update `FACEBOOK_STORAGE_STATE_B64`, then send
+`/scan`. Updating the secret or queueing a scan does not itself clear the pause:
+a completed scan must read authenticated Marketplace data. Empty results,
+network errors, browser crashes, and stale scan reports cannot clear the guard.
+The guard prevents repeated failed automatic attempts; it does not reactivate a
+Facebook account or guarantee that Facebook will accept a session indefinitely.
+
 Send `/cars` in Telegram to browse all saved database findings, newest first,
 with price, year, mileage, location, first/last seen dates, Marketplace links,
 and Previous/Next buttons. Each page shows three cars. `/cars 2` opens page two.

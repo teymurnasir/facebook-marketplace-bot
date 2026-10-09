@@ -44,6 +44,7 @@ class SessionNotificationsTest(unittest.TestCase):
         self.scrape = self.stack.enter_context(patch.object(self.scraper, "_scrape_url",
                                                           return_value=[self.listing]))
         self.stack.enter_context(patch.object(self.scraper, "_read_details"))
+        self.session_report = self.stack.enter_context(patch("main.publish_session_status", return_value=True))
 
     def run_scan(self, notify=True):
         return main.run_once(self.scraper, self.store, self.telegram, self.cfg, notify=notify)
@@ -58,6 +59,8 @@ class SessionNotificationsTest(unittest.TestCase):
         self.assertEqual(sum("<b>Facebook session active</b>" in m for m in messages), 1)
         self.assertIn("Marketplace data verified", messages[-1])
         self.save.assert_called_once()
+        self.assertEqual(self.session_report.call_args.args[0], "active")
+        self.session_report.assert_called_once()
 
     def test_detail_budget_and_deduplication_across_search_pages(self):
         with patch.object(self.scraper, "_read_details") as read:
@@ -88,6 +91,7 @@ class SessionNotificationsTest(unittest.TestCase):
         self.assertTrue(any("<b>Facebook status not verified</b>" in m for m in self.messages()))
         self.assertFalse(any("session active" in m for m in self.messages()))
         self.save.assert_not_called()
+        self.session_report.assert_not_called()
 
     def test_listing_data_without_login_cookie_is_unverified(self):
         self.page.context.cookies.return_value = []
@@ -111,6 +115,7 @@ class SessionNotificationsTest(unittest.TestCase):
         self.save.assert_not_called()
         self.browser.close.assert_called_once()
         self.assertFalse(any("session active" in m for m in self.messages()))
+        self.session_report.assert_not_called()
 
     def test_crash_after_verified_access_does_not_save_a_session(self):
         self.scrape.side_effect = [[self.listing], PlaywrightError("Page.goto: Page crashed")]
@@ -119,6 +124,7 @@ class SessionNotificationsTest(unittest.TestCase):
         self.assertTrue(self.scraper.session_verified)
         self.assertEqual(self.scrape.call_count, 2)
         self.save.assert_not_called()
+        self.session_report.assert_not_called()
         self.browser.close.assert_called_once()
 
     def test_closed_browser_stops_without_claiming_login_expired(self):
@@ -187,6 +193,9 @@ class SessionNotificationsTest(unittest.TestCase):
             self.assertEqual(main.main(), 1)
         self.assertIn("Facebook session inactive - login needed", self.messages()[-1])
         self.assertIn("FACEBOOK_STORAGE_STATE_B64", self.messages()[-1])
+        self.assertIn("Automatic scans are paused", self.messages()[-1])
+        self.session_report.assert_called_once()
+        self.assertEqual(self.session_report.call_args.args[0], "inactive")
         self.assertFalse(any("finished" in m for m in self.messages()))
         self.save.assert_not_called()
 

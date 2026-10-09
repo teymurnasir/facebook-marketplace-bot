@@ -16,6 +16,7 @@ const HELP = new Set(["/start", "/help"]);
 const ID = new Set(["/id", "/chatid"]);
 const SETTINGS = new Set(["/settings", "/filters", "/config"]);
 const CUSTOM = new Set(["/customsearch", "/custom", "/oneshot"]);
+const SESSION = new Set(["/session", "/status"]);
 const CARS_PAGE_SIZE = 3;
 
 const CANADA_NOTE = "🇨🇦 <b>Canada only</b> — locations & prices are for Canadian Marketplace.";
@@ -288,6 +289,7 @@ function formatSettings(cfg) {
     CANADA_NOTE,
     "",
     `<b>Auto scan:</b> ${formatInterval(cfg.poll_interval_minutes)}`,
+    "Facebook login guard and timer pause: /session",
     "",
     "<b>Locations</b> (add only what you need — each one is searched)",
   ];
@@ -1561,9 +1563,13 @@ async function handleScan(env, chatId) {
   }
   const areaN = cfg.market_areas.length;
   const carN = cfg.searches.length;
+  const session = await getSessionStatus(env);
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text:
+      (session.status === "inactive"
+        ? "Automatic scans are paused for login recovery. This manual request will test access; it does not clear the pause.\n\n"
+        : "") +
       "🔎 Scan with <b>saved settings</b>…\n" +
       CANADA_NOTE +
       `\n🚗 ${carN} car(s) × 📍 ${areaN} location(s)` +
@@ -1609,12 +1615,41 @@ async function startCustomSearch(env, chatId) {
   });
 }
 
+async function getSessionStatus(env) {
+  const raw = await env.SETTINGS.get("facebook_session_status");
+  return raw ? JSON.parse(raw) : { status: "unknown", checked_at: null };
+}
+
+async function showSessionStatus(env, chatId) {
+  const session = await getSessionStatus(env);
+  const cfg = await getConfig(env);
+  const lines = ["<b>Facebook session</b>"];
+  if (session.status === "inactive") {
+    lines.push("Login needed. Automatic scans are paused.",
+      "Log in locally using python -m src.save_session, update GitHub secret FACEBOOK_STORAGE_STATE_B64, then send /scan.",
+      "Only a completed scan with verified Facebook access resumes automatic scans.");
+  } else if (session.status === "active") {
+    lines.push("Facebook access was verified during the last completed scan.",
+      "This is the last recorded result, not a live Facebook check.");
+  } else {
+    lines.push("Facebook access has not been recorded yet. Use /scan to test.");
+  }
+  lines.push(`Saved interval: ${formatInterval(cfg.poll_interval_minutes)}.`);
+  if (session.checked_at) lines.push(`Last check: ${findingDate(session.checked_at)}.`);
+  await tg(env, "sendMessage", { chat_id: chatId, text: lines.join("\n"), parse_mode: "HTML" });
+}
+
 async function scheduledScan(env, { source = "timer" } = {}) {
   // Called often (GitHub tick + Cloudflare cron). Only dispatch when Telegram interval elapsed.
   const cfg = await getConfig(env);
   const intervalMin = Number(cfg.poll_interval_minutes);
   if (!intervalMin || intervalMin <= 0) {
     return { ok: true, skipped: "auto_off" };
+  }
+
+  const session = await getSessionStatus(env);
+  if (session.status === "inactive") {
+    return { ok: true, skipped: "facebook_login_needed", interval_min: intervalMin };
   }
 
   const lastRaw = await env.SETTINGS.get("last_auto_scan_at");
@@ -1667,6 +1702,36 @@ export default {
 
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    if (url.pathname === "/session" && ["GET", "POST"].includes(request.method)) {
+      const token = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
+      if (!token || token !== env.CONFIG_TOKEN) return new Response("unauthorized", { status: 401 });
+      if (request.method === "GET") return Response.json(await getSessionStatus(env));
+      let payload;
+      try {
+        payload = await request.json();
+      } catch {
+        return new Response("bad json", { status: 400 });
+      }
+      if (!["active", "inactive"].includes(payload?.status)
+          || !Number.isSafeInteger(payload.scan_started_at)
+          || payload.scan_started_at <= 0
+          || payload.scan_started_at > Date.now() + 60000) {
+        return new Response("invalid session status", { status: 400 });
+      }
+      const previous = await getSessionStatus(env);
+      // An older scan must not override a newer recovery result.
+      if (previous.scan_started_at && payload.scan_started_at <= previous.scan_started_at) {
+        return Response.json({ ok: true, applied: false });
+      }
+      const session = {
+        status: payload.status,
+        scan_started_at: payload.scan_started_at,
+        checked_at: new Date().toISOString(),
+      };
+      await env.SETTINGS.put("facebook_session_status", JSON.stringify(session));
+      return Response.json({ ok: true, applied: true });
+    }
 
     if (url.pathname === "/findings" && ["GET", "POST"].includes(request.method)) {
       const token = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
@@ -1819,6 +1884,15 @@ export default {
       const text = msg.text.trim();
       const cmd = text.split(/\s+/)[0].split("@")[0].toLowerCase();
 
+      if (SESSION.has(cmd)) {
+        if (!authorized(chatId, env)) {
+          await tg(env, "sendMessage", { chat_id: chatId, text: "Not authorized." });
+          return new Response("ok");
+        }
+        await showSessionStatus(env, chatId);
+        return new Response("ok");
+      }
+
       if (cmd === "/cars") {
         if (!authorized(chatId, env)) {
           await tg(env, "sendMessage", { chat_id: chatId, text: "Not authorized." });
@@ -1847,6 +1921,7 @@ export default {
             "🇨🇦 <b>Canada Marketplace car alerts</b>\n\n" +
             "/scan — run saved filters\n" +
             "/cars — browse all saved findings\n" +
+            "/session — last Facebook check and automatic scan pause\n" +
             "/settings — shared cars, km, locations+radius\n" +
             "/customsearch — one-off: city, radius, car, years, price, km\n" +
             "/cancel — abort wizard\n" +

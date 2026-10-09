@@ -18,6 +18,7 @@ from src.settings_sync import (
     fetch_job_config,
     get_pending_scan,
     publish_findings,
+    publish_session_status,
     settings_enabled,
     sync_shared_settings,
     write_config_yaml,
@@ -51,6 +52,14 @@ def env_bool(name: str, default: bool = True) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _report_session_status(status: str, scan_started_at: int) -> bool:
+    try:
+        return publish_session_status(status, scan_started_at)
+    except Exception:
+        logger.exception("Could not update the automatic scan Facebook session guard")
+        return False
+
+
 def run_once(
     scraper: MarketplaceScraper,
     store: SeenStore,
@@ -58,7 +67,10 @@ def run_once(
     cfg: dict,
     *,
     notify: bool,
+    scan_started_at: int | None = None,
 ) -> int:
+    if scan_started_at is None:
+        scan_started_at = int(time.time() * 1000)
     areas = cfg.get("market_areas") or []
     if not cfg.get("searches"):
         logger.error("No car searches configured — aborting")
@@ -110,6 +122,14 @@ def run_once(
         on_session_active=session_active,
         detail_cache={row["listing_id"]: row for row in store.all_findings()},
     )
+
+    if scraper.session_verified:
+        status_applied = _report_session_status("active", scan_started_at)
+        if not status_applied and settings_enabled() and notify and telegram is not None:
+            telegram.send_text(
+                "Facebook access was verified, but the automatic timer status could not be updated. "
+                "Use /session to check whether automatic scans are still paused."
+            )
 
     if not scraper.session_verified and notify and telegram is not None:
         telegram.send_text(
@@ -322,20 +342,33 @@ def main() -> int:
                 except Exception:
                     logger.exception("Could not ack pending Telegram /scan")
             try:
+                scan_started_at = int(time.time() * 1000)
                 run_once(
                     scraper,
                     store,
                     telegram,
                     cfg,
                     notify=bool(telegram) and not seed,
+                    scan_started_at=scan_started_at,
                 )
             except Exception as exc:
                 logger.exception("Scan failed")
+                paused = (
+                    _report_session_status("inactive", scan_started_at)
+                    if isinstance(exc, FacebookSessionError) else False
+                )
                 if telegram and not seed:
                     if isinstance(exc, FacebookSessionError):
                         telegram.send_text(
                             "❌ <b>Facebook session inactive - login needed</b>\n"
                             "Facebook requested login or a security checkpoint. Scan stopped.\n\n"
+                            + (
+                                "Automatic scans are paused until a successful /scan verifies Facebook access. "
+                                "Your interval and saved cars are unchanged. Use /session to check status.\n\n"
+                                if paused else
+                                "The automatic timer could not be paused. Turn Auto off in /settings "
+                                "to prevent repeated failed scans.\n\n"
+                            ) +
                             "Log in using <code>python -m src.save_session</code>, "
                             "and update GitHub secret <code>FACEBOOK_STORAGE_STATE_B64</code>. "
                             "The new secret automatically replaces the old cached session. "
