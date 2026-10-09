@@ -3,6 +3,8 @@ import unittest
 from contextlib import ExitStack
 from unittest.mock import Mock, patch
 
+from playwright.sync_api import Error as PlaywrightError
+
 import main
 from src.models import Listing, SearchConfig
 from src.scraper import FacebookSessionError, MarketplaceScraper
@@ -100,6 +102,48 @@ class SessionNotificationsTest(unittest.TestCase):
         self.assertFalse(any("finished" in m for m in self.messages()))
         self.save.assert_not_called()
         self.browser.close.assert_called_once()
+
+    def test_page_crash_stops_without_reusing_the_broken_page_or_saving_login(self):
+        self.scrape.side_effect = PlaywrightError("Locator.count: Target crashed")
+        with self.assertRaisesRegex(RuntimeError, "browser crashed or closed"):
+            self.run_scan()
+        self.scrape.assert_called_once()
+        self.save.assert_not_called()
+        self.browser.close.assert_called_once()
+        self.assertFalse(any("session active" in m for m in self.messages()))
+
+    def test_crash_after_verified_access_does_not_save_a_session(self):
+        self.scrape.side_effect = [[self.listing], PlaywrightError("Page.goto: Page crashed")]
+        with self.assertRaisesRegex(RuntimeError, "status could not be verified"):
+            self.run_scan()
+        self.assertTrue(self.scraper.session_verified)
+        self.assertEqual(self.scrape.call_count, 2)
+        self.save.assert_not_called()
+        self.browser.close.assert_called_once()
+
+    def test_closed_browser_stops_without_claiming_login_expired(self):
+        self.page.is_closed.return_value = False
+        self.browser.is_connected.return_value = False
+        self.scrape.side_effect = PlaywrightError("Browser disconnected")
+        with self.assertRaisesRegex(RuntimeError, "saved login was not replaced"):
+            self.run_scan()
+        self.scrape.assert_called_once()
+        self.save.assert_not_called()
+
+    def test_recoverable_playwright_error_can_continue_to_next_page(self):
+        self.page.is_closed.return_value = False
+        self.browser.is_connected.return_value = True
+        self.scrape.side_effect = [PlaywrightError("Page.goto: Timeout"), [self.listing]]
+        self.assertEqual(self.run_scan(), 1)
+        self.assertEqual(self.scrape.call_count, 2)
+        self.save.assert_called_once()
+
+    def test_launch_uses_full_chromium_in_headless_mode(self):
+        p = Mock()
+        p.chromium.launch.return_value.version = "153.0.8010.12"
+        with patch("pathlib.Path.exists", return_value=False):
+            MarketplaceScraper._launch(self.scraper, p)
+        p.chromium.launch.assert_called_once_with(headless=self.scraper.headless, channel="chromium")
 
     def test_seed_mode_is_silent(self):
         self.run_scan(notify=False)

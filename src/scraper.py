@@ -9,7 +9,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 from urllib.parse import urlencode, urlparse
 
-from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_playwright
+from playwright.sync_api import (
+    Browser, BrowserContext, Error as PlaywrightError, Page, Playwright, sync_playwright,
+)
 
 from .models import Listing, SearchConfig
 from .listing_details import classify_safety
@@ -608,7 +610,17 @@ class MarketplaceScraper:
                                 except FacebookSessionError:
                                     session_healthy = False
                                     raise
-                                except Exception:
+                                except Exception as exc:
+                                    if isinstance(exc, PlaywrightError) and (
+                                        "crashed" in str(exc).lower()
+                                        or page.is_closed()
+                                        or not browser.is_connected()
+                                    ):
+                                        session_healthy = False
+                                        raise RuntimeError(
+                                            "Marketplace browser crashed or closed; Facebook status could not be verified. "
+                                            "The saved login was not replaced. Retry /scan."
+                                        ) from exc
                                     failed_pages += 1
                                     logger.exception(
                                         "Scrape failed for %s / %s / %s",
@@ -832,7 +844,8 @@ class MarketplaceScraper:
         )
 
     def _launch(self, p: Playwright) -> tuple[Browser, BrowserContext, Page]:
-        browser = p.chromium.launch(headless=self.headless)
+        # Use the full Chromium browser, including its modern headless mode.
+        browser = p.chromium.launch(headless=self.headless, channel="chromium")
         context_kwargs: dict[str, Any] = {
             "viewport": {"width": 1280, "height": 900},
             "locale": "en-CA",
