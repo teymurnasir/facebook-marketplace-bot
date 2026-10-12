@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install sync dependencies
-        run: pip install httpx PyYAML
+        run: pip install httpx PyYAML cryptography
       - name: Install description reader
         if: inputs.refresh_details
         run: |
@@ -33,19 +33,21 @@ jobs:
         if: inputs.refresh_details
         env:
           FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
+          FACEBOOK_SESSION_CACHE_KEY: ${{ secrets.FACEBOOK_SESSION_CACHE_KEY }}
         run: python -m scripts.prepare_session generation >> "$GITHUB_OUTPUT"
       - name: Restore saved Facebook session
         if: inputs.refresh_details
         uses: actions/cache/restore@v4
         with:
-          path: storage_state.json
-          key: fb-session-v3-${{ steps.facebook-session.outputs.generation }}-${{ github.run_id }}
+          path: facebook_session.enc
+          key: fb-session-v4-encrypted-${{ steps.facebook-session.outputs.generation }}-${{ github.run_id }}
           restore-keys: |
-            fb-session-v3-${{ steps.facebook-session.outputs.generation }}-
+            fb-session-v4-encrypted-${{ steps.facebook-session.outputs.generation }}-
       - name: Restore session secret if no cached session
         if: inputs.refresh_details
         env:
           FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
+          FACEBOOK_SESSION_CACHE_KEY: ${{ secrets.FACEBOOK_SESSION_CACHE_KEY }}
         run: python -m scripts.prepare_session restore
       - name: Restore existing scan database
         uses: actions/cache/restore@v4
@@ -70,7 +72,14 @@ jobs:
           key: seen-db-v4-${{ github.run_id }}
       - name: Save refreshed Facebook session
         if: success() && inputs.refresh_details && steps.sync.outputs.facebook_session_refreshed == 'true'
+        env:
+          FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
+          FACEBOOK_SESSION_CACHE_KEY: ${{ secrets.FACEBOOK_SESSION_CACHE_KEY }}
+        run: python -m scripts.prepare_session encrypt
+
+      - name: Save encrypted Facebook session cache
+        if: success() && inputs.refresh_details && steps.sync.outputs.facebook_session_refreshed == 'true'
         uses: actions/cache/save@v4
         with:
-          path: storage_state.json
-          key: fb-session-v3-${{ steps.facebook-session.outputs.generation }}-${{ github.run_id }}
+          path: facebook_session.enc
+          key: fb-session-v4-encrypted-${{ steps.facebook-session.outputs.generation }}-${{ github.run_id }}

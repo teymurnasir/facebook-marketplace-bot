@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from cryptography.fernet import Fernet, InvalidToken
+
 
 def validate_session_state(state: Any, *, check_expiry: bool = True) -> None:
     if not isinstance(state, dict) or not isinstance(state.get("cookies"), list):
@@ -67,6 +69,63 @@ def restore_session(path: str | Path, encoded: str, *, from_secret: bool = False
             validate_session_state(json.loads(path.read_text(encoding="utf-8")))
             return True
         except (ValueError, OSError):
+            pass
+    write_session_state(path, seed)
+    return False
+
+
+def _cache_cipher(key: str) -> Fernet:
+    if not key:
+        raise ValueError("Missing FACEBOOK_SESSION_CACHE_KEY; plaintext session caching is not allowed")
+    try:
+        return Fernet(key.encode("ascii"))
+    except (ValueError, UnicodeError):
+        raise ValueError("FACEBOOK_SESSION_CACHE_KEY is not a valid encryption key") from None
+
+
+def encrypted_session_generation(encoded: str, key: str) -> str:
+    _cache_cipher(key)
+    return f"{session_generation(encoded)}-{hashlib.sha256(key.encode()).hexdigest()[:12]}"
+
+
+def encrypt_session_cache(path: str | Path, cache: str | Path, encoded: str, key: str) -> None:
+    cipher = _cache_cipher(key)
+    seed = decode_session_secret(encoded, check_expiry=False)
+    state = json.loads(Path(path).read_text(encoding="utf-8"))
+    validate_session_state(state)
+    def account(data: dict[str, Any]) -> set[str]:
+        return {c["value"] for c in data["cookies"] if c.get("name") == "c_user"
+                and str(c.get("domain", "")).lstrip(".") in {"facebook.com", "www.facebook.com"}}
+    if account(state) != account(seed):
+        raise ValueError("Refreshed session belongs to a different Facebook account")
+    payload = json.dumps({"version": 1, "generation": session_generation(encoded), "state": state}).encode()
+    cache = Path(cache)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".encrypted-session-", dir=cache.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(cipher.encrypt(payload))
+        os.replace(temporary, cache)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def restore_encrypted_session(path: str | Path, cache: str | Path, encoded: str,
+                              key: str, *, from_secret: bool = False) -> bool:
+    cipher = _cache_cipher(key)
+    seed = decode_session_secret(encoded, check_expiry=False)
+    cache = Path(cache)
+    if cache.is_file() and not from_secret:
+        try:
+            payload = json.loads(cipher.decrypt(cache.read_bytes()))
+            if payload.get("version") != 1 or payload.get("generation") != session_generation(encoded):
+                raise ValueError("Encrypted cache belongs to another session generation")
+            state = payload["state"]
+            validate_session_state(state)
+            write_session_state(path, state)
+            return True
+        except (InvalidToken, ValueError, KeyError, TypeError, OSError, AttributeError):
+            # A corrupt, expired, or rotated cache never falls back to plaintext caches.
             pass
     write_session_state(path, seed)
     return False

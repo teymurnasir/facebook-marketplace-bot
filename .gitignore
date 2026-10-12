@@ -13,5 +13,6 @@ cookies.json
 .DS_Store
 playwright-report/
 storage_state.json
+facebook_session.enc
 telegram-webhook/.wrangler/
 .wrangler/

@@ -1,5 +1,5 @@
 # Runs in GitHub Actions cloud when Telegram /scan or the auto tick dispatches it.
-# Repo must be PRIVATE — it uses your Facebook session secret.
+# Login cache is encrypted with a separate GitHub secret; never cache plaintext cookies.
 
 name: Marketplace scan
 
@@ -72,19 +72,21 @@ jobs:
         id: facebook-session
         env:
           FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
+          FACEBOOK_SESSION_CACHE_KEY: ${{ secrets.FACEBOOK_SESSION_CACHE_KEY }}
         run: python -m scripts.prepare_session generation >> "$GITHUB_OUTPUT"
 
       - name: Restore refreshed Facebook session cache
         uses: actions/cache/restore@v4
         with:
-          path: storage_state.json
-          key: fb-session-v3-${{ steps.facebook-session.outputs.generation }}-${{ github.run_id }}
+          path: facebook_session.enc
+          key: fb-session-v4-encrypted-${{ steps.facebook-session.outputs.generation }}-${{ github.run_id }}
           restore-keys: |
-            fb-session-v3-${{ steps.facebook-session.outputs.generation }}-
+            fb-session-v4-encrypted-${{ steps.facebook-session.outputs.generation }}-
 
       - name: Restore Facebook session
         env:
           FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
+          FACEBOOK_SESSION_CACHE_KEY: ${{ secrets.FACEBOOK_SESSION_CACHE_KEY }}
           RESET_SESSION: ${{ github.event.inputs.reset_session }}
         run: |
           if [ "$RESET_SESSION" = "true" ]; then
@@ -134,7 +136,14 @@ jobs:
 
       - name: Save refreshed Facebook session for next run
         if: success() && steps.scan.outputs.facebook_session_refreshed == 'true'
+        env:
+          FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
+          FACEBOOK_SESSION_CACHE_KEY: ${{ secrets.FACEBOOK_SESSION_CACHE_KEY }}
+        run: python -m scripts.prepare_session encrypt
+
+      - name: Save encrypted Facebook session cache
+        if: success() && steps.scan.outputs.facebook_session_refreshed == 'true'
         uses: actions/cache/save@v4
         with:
-          path: storage_state.json
-          key: fb-session-v3-${{ steps.facebook-session.outputs.generation }}-${{ github.run_id }}
+          path: facebook_session.enc
+          key: fb-session-v4-encrypted-${{ steps.facebook-session.outputs.generation }}-${{ github.run_id }}

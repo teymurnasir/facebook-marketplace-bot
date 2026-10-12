@@ -40,6 +40,14 @@ cp .env.example .env
 
 Marketplace needs a logged-in browser session:
 
+Cloud login snapshots are encrypted before caching. Set GitHub secret
+`FACEBOOK_SESSION_CACHE_KEY` to a securely generated Fernet key, separately from
+`FACEBOOK_STORAGE_STATE_B64`. Missing or invalid keys stop the workflow; the bot
+never uploads plaintext login JSON to an Actions cache. Key rotation creates a
+new encrypted cache generation. Never commit either secret or `storage_state.json`.
+If login snapshots were previously cached in a public repository, delete those
+caches and invalidate the exposed Facebook sessions before resuming scans.
+
 ```bash
 python -m src.save_session
 ```

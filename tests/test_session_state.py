@@ -8,10 +8,12 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import yaml
+from cryptography.fernet import Fernet
 
 from src.scraper import MarketplaceScraper
 from src.session_state import (decode_session_secret, restore_session, session_generation,
-                               validate_session_state, write_session_state)
+                               validate_session_state, write_session_state, encrypt_session_cache,
+                               restore_encrypted_session, encrypted_session_generation)
 
 
 def session(value="test-login", expiry=None):
@@ -34,6 +36,8 @@ class SessionStateTest(unittest.TestCase):
         self.path = Path(self.directory.name) / "session.json"
         self.state = session()
         self.secret = encoded(self.state)
+        self.key = Fernet.generate_key().decode()
+        self.cache = self.path.parent / "session.enc"
 
     def test_generation_changes_with_new_credentials_not_json_formatting(self):
         generation = session_generation(self.secret)
@@ -125,7 +129,7 @@ class SessionStateTest(unittest.TestCase):
             steps = yaml.safe_load((root / ".github/workflows" / workflow).read_text())["jobs"]
             steps = next(iter(steps.values()))["steps"]
             session_steps = [s for s in steps if s.get("uses", "").startswith("actions/cache")
-                             and s.get("with", {}).get("path") == "storage_state.json"]
+                             and s.get("with", {}).get("path") == "facebook_session.enc"]
             self.assertEqual(len(session_steps), 2)
             restore, save = session_steps
             self.assertIn("steps.facebook-session.outputs.generation", restore["with"]["key"])
@@ -133,6 +137,69 @@ class SessionStateTest(unittest.TestCase):
             self.assertEqual(restore["with"]["key"], save["with"]["key"])
             self.assertIn("success()", save["if"])
             self.assertIn("facebook_session_refreshed == 'true'", save["if"])
+            self.assertIn("fb-session-v4-encrypted-", restore["with"]["key"])
+            self.assertFalse(any("storage_state.json" in s.get("with", {}).get("path", "")
+                                 for s in steps if s.get("uses", "").startswith("actions/cache")))
+            encryption = [s for s in steps if s.get("run") == "python -m scripts.prepare_session encrypt"]
+            self.assertEqual(len(encryption), 1)
+            self.assertIn("success()", encryption[0]["if"])
+            self.assertIn("facebook_session_refreshed == 'true'", encryption[0]["if"])
+            self.assertIn("FACEBOOK_SESSION_CACHE_KEY", encryption[0]["env"])
+
+    def test_encrypted_cache_round_trip_contains_no_plaintext_credentials(self):
+        write_session_state(self.path, self.state)
+        encrypt_session_cache(self.path, self.cache, self.secret, self.key)
+        self.assertNotIn(b"test-login", self.cache.read_bytes())
+        self.assertNotIn(b'"cookies"', self.cache.read_bytes())
+        self.assertEqual(self.cache.stat().st_mode & 0o777, 0o600)
+        self.path.unlink()
+        self.assertTrue(restore_encrypted_session(self.path, self.cache, self.secret, self.key))
+        self.assertEqual(json.loads(self.path.read_text()), self.state)
+
+    def test_missing_or_invalid_key_fails_closed_without_plaintext_fallback(self):
+        for key in ("", "invalid-private-key"):
+            with self.assertRaises(ValueError) as error:
+                restore_encrypted_session(self.path, self.cache, self.secret, key)
+            self.assertNotIn("invalid-private-key", str(error.exception))
+            self.assertFalse(self.path.exists())
+
+    def test_key_rotation_changes_generation_and_ignores_old_ciphertext(self):
+        write_session_state(self.path, self.state)
+        encrypt_session_cache(self.path, self.cache, self.secret, self.key)
+        new_key = Fernet.generate_key().decode()
+        self.assertNotEqual(encrypted_session_generation(self.secret, self.key),
+                            encrypted_session_generation(self.secret, new_key))
+        self.assertFalse(restore_encrypted_session(self.path, self.cache, self.secret, new_key))
+        self.assertEqual(json.loads(self.path.read_text()), self.state)
+
+    def test_tampered_plaintext_or_wrong_generation_cache_uses_secret_only(self):
+        for contents in (b"tampered", json.dumps(self.state).encode(),
+                         Fernet(self.key.encode()).encrypt(json.dumps({
+                             "version": 1, "generation": "wrong", "state": session("different")}).encode())):
+            self.cache.write_bytes(contents)
+            write_session_state(self.path, session("old-plaintext-cache"))
+            self.assertFalse(restore_encrypted_session(self.path, self.cache, self.secret, self.key))
+            self.assertEqual(json.loads(self.path.read_text()), self.state)
+
+    def test_manual_reset_ignores_valid_encrypted_cache(self):
+        refreshed = session()
+        refreshed["cookies"][1]["value"] = "refreshed-xs"
+        write_session_state(self.path, refreshed)
+        encrypt_session_cache(self.path, self.cache, self.secret, self.key)
+        self.assertFalse(restore_encrypted_session(self.path, self.cache, self.secret, self.key, from_secret=True))
+        self.assertEqual(json.loads(self.path.read_text()), self.state)
+
+    def test_valid_encrypted_cache_can_outlive_cookie_expiry_in_seed(self):
+        expired_seed = encoded(session(expiry=1))
+        write_session_state(self.path, self.state)
+        encrypt_session_cache(self.path, self.cache, expired_seed, self.key)
+        self.assertTrue(restore_encrypted_session(self.path, self.cache, expired_seed, self.key))
+
+    def test_different_account_is_not_encrypted(self):
+        write_session_state(self.path, session("other-account"))
+        with self.assertRaises(ValueError):
+            encrypt_session_cache(self.path, self.cache, self.secret, self.key)
+        self.assertFalse(self.cache.exists())
 
 
 if __name__ == "__main__":
