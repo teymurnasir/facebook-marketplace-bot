@@ -51,14 +51,16 @@ jobs:
           SETTINGS_CONFIG_URL: ${{ secrets.SETTINGS_CONFIG_URL }}
           SETTINGS_CONFIG_TOKEN: ${{ secrets.SETTINGS_CONFIG_TOKEN }}
         run: |
+          set -euo pipefail
+          BASE="${SETTINGS_CONFIG_URL%/config}"
+          PAYLOAD=$(python3 -c 'import json,time; print(json.dumps({"status":"inactive","scan_started_at":int(time.time()*1000)}))')
+          curl -fsS --max-time 30 -X POST \
+            -H "Authorization: Bearer ${SETTINGS_CONFIG_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data "$PAYLOAD" "${BASE}/session" -o /tmp/session-pause.json
           python3 - <<'PY'
-          import json, os, time, urllib.request
-          base = os.environ['SETTINGS_CONFIG_URL'].removesuffix('/config').rstrip('/')
-          data = json.dumps({'status': 'inactive', 'scan_started_at': int(time.time() * 1000)}).encode()
-          request = urllib.request.Request(base + '/session', data=data, headers={
-              'Authorization': 'Bearer ' + os.environ['SETTINGS_CONFIG_TOKEN'],
-              'Content-Type': 'application/json'}, method='POST')
-          with urllib.request.urlopen(request, timeout=30) as response:
+          import json
+          with open('/tmp/session-pause.json') as response:
               result = json.load(response)
           if not result.get('ok') or not result.get('applied'):
               raise SystemExit('Could not confirm automatic scan pause')
