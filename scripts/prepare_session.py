@@ -12,6 +12,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("generation", "restore"))
     parser.add_argument("--path", default="storage_state.json")
+    parser.add_argument("--from-secret", action="store_true", help="Ignore the session cache for a manual recovery")
     args = parser.parse_args()
     encoded = os.environ.get("FACEBOOK_STORAGE_STATE_B64", "")
     if not encoded:
@@ -20,7 +21,7 @@ def main() -> None:
         if args.operation == "generation":
             print(f"generation={session_generation(encoded)}")
         else:
-            cached = restore_session(args.path, encoded)
+            cached = restore_session(args.path, encoded, from_secret=args.from_secret)
             print("Using refreshed session cache" if cached else "Restored session from secret")
     except ValueError as exc:
         parser.exit(1, f"{exc}\n")

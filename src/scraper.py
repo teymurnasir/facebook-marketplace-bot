@@ -37,6 +37,10 @@ _FB_RADIUS_MILES = (1, 2, 5, 10, 20, 40, 60, 80, 100, 250, 500)
 class FacebookSessionError(RuntimeError):
     """Raised when Facebook redirects the browser to login/checkpoint pages."""
 
+    def __init__(self, message: str, *, reason: str = "unknown") -> None:
+        super().__init__(message)
+        self.reason = reason
+
 
 def _desktop_chrome_user_agent(chrome_version: str) -> str:
     version = (chrome_version or "120.0.0.0").split()[0]
@@ -881,18 +885,28 @@ class MarketplaceScraper:
             logger.exception("Could not save refreshed Facebook session state")
 
     def _raise_if_session_problem(self, page: Page) -> None:
-        url = page.url.lower()
-        if "/login" in url or "/checkpoint" in url:
+        target = urlparse(page.url)
+        path = target.path.lower()
+        is_facebook = target.hostname == "facebook.com" or (target.hostname or "").endswith(".facebook.com")
+        if is_facebook and path.startswith("/checkpoint"):
             raise FacebookSessionError(
-                "Facebook session is no longer valid. "
-                "Refresh it with: python3 -m src.save_session"
+                "Facebook requested a security checkpoint. Complete the check in your normal browser, "
+                "then refresh the saved session with: python3 -m src.save_session",
+                reason="checkpoint",
+            )
+        if is_facebook and path.startswith("/login"):
+            raise FacebookSessionError(
+                "Facebook requested login; the saved session was rejected. "
+                "Refresh it with: python3 -m src.save_session",
+                reason="login",
             )
         try:
             login_text = page.get_by_text("Log in to Facebook", exact=False)
             if login_text.count() and login_text.first.is_visible(timeout=1000):
                 raise FacebookSessionError(
                     "Facebook is showing the login page. "
-                    "Refresh the saved session with: python3 -m src.save_session"
+                    "Refresh the saved session with: python3 -m src.save_session",
+                    reason="login",
                 )
         except FacebookSessionError:
             raise

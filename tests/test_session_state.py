@@ -84,6 +84,18 @@ class SessionStateTest(unittest.TestCase):
             restore_session(self.path, encoded(session(expiry=1)))
         self.assertFalse(self.path.exists())
 
+    def test_manual_recovery_replaces_cache_with_original_secret(self):
+        write_session_state(self.path, session("rejected-cache"))
+        self.assertFalse(restore_session(self.path, self.secret, from_secret=True))
+        self.assertEqual(json.loads(self.path.read_text()), self.state)
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+
+    def test_expired_secret_recovery_does_not_destroy_existing_cache(self):
+        write_session_state(self.path, self.state)
+        with self.assertRaises(ValueError):
+            restore_session(self.path, encoded(session(expiry=1)), from_secret=True)
+        self.assertEqual(json.loads(self.path.read_text()), self.state)
+
     def test_saved_state_is_private_and_invalid_state_does_not_replace_it(self):
         write_session_state(self.path, self.state)
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)

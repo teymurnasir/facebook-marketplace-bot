@@ -94,6 +94,13 @@ After verified recovery, the next automatic scan waits the full saved interval.
 The guard prevents repeated failed automatic attempts; it does not reactivate a
 Facebook account or guarantee that Facebook will accept a session indefinitely.
 
+To test whether only the refreshed cache was rejected, use
+`gh workflow run marketplace.yml --ref main -f reset_session=true` once. This
+tries the existing original secret, not a new login, and does not clear the
+pause until the scan verifies access. A security checkpoint requires action in
+your normal browser; do not repeatedly dispatch recovery scans. If the original
+secret is also rejected, refresh it from a valid login before testing again.
+
 Send `/cars` in Telegram to browse all saved database findings, newest first,
 with price, year, mileage, location, first/last seen dates, Marketplace links,
 and Previous/Next buttons. Each page shows three cars. `/cars 2` opens page two.

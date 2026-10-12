@@ -91,6 +91,8 @@ def run_once(
     ignore_seen = env_bool("CUSTOM_SEARCH", False)
     if ignore_seen:
         scan_name = "Custom search"
+    elif env_bool("RECOVERY_SCAN", False):
+        scan_name = "Facebook recovery scan"
     elif env_bool("MANUAL_SCAN", False):
         scan_name = "Manual /scan"
     else:
@@ -359,9 +361,13 @@ def main() -> int:
                 )
                 if telegram and not seed:
                     if isinstance(exc, FacebookSessionError):
+                        reason = {
+                            "checkpoint": "Facebook requested a security checkpoint. Complete it in your normal browser before refreshing the saved session.",
+                            "login": "Facebook requested login; the saved session was rejected.",
+                        }.get(exc.reason, "Facebook requested login or a security checkpoint.")
                         telegram.send_text(
                             "❌ <b>Facebook session inactive - login needed</b>\n"
-                            "Facebook requested login or a security checkpoint. Scan stopped.\n\n"
+                            + reason + " Scan stopped.\n\n"
                             + (
                                 "Automatic scans are paused until a successful /scan verifies Facebook access. "
                                 "Your interval and saved cars are unchanged. Use /session to check status.\n\n"

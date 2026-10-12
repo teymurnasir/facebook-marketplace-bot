@@ -59,10 +59,10 @@ def write_session_state(path: str | Path, state: dict[str, Any]) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
-def restore_session(path: str | Path, encoded: str) -> bool:
+def restore_session(path: str | Path, encoded: str, *, from_secret: bool = False) -> bool:
     path = Path(path)
     seed = decode_session_secret(encoded, check_expiry=False)
-    if path.is_file():
+    if path.is_file() and not from_secret:
         try:
             validate_session_state(json.loads(path.read_text(encoding="utf-8")))
             return True

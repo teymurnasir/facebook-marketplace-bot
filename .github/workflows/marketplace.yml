@@ -12,6 +12,11 @@ on:
         description: "Optional Cloudflare job id for /customsearch (one-off)"
         required: false
         default: ""
+      reset_session:
+        description: "Recovery only: test the original secret instead of the session cache"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: marketplace-scan
@@ -80,7 +85,13 @@ jobs:
       - name: Restore Facebook session
         env:
           FACEBOOK_STORAGE_STATE_B64: ${{ secrets.FACEBOOK_STORAGE_STATE_B64 }}
-        run: python -m scripts.prepare_session restore
+          RESET_SESSION: ${{ github.event.inputs.reset_session }}
+        run: |
+          if [ "$RESET_SESSION" = "true" ]; then
+            python -m scripts.prepare_session restore --from-secret
+          else
+            python -m scripts.prepare_session restore
+          fi
 
       - name: Restore seen.db
         uses: actions/cache/restore@v4
@@ -109,6 +120,7 @@ jobs:
           HEADLESS: "true"
           FACEBOOK_STORAGE_STATE: storage_state.json
           CUSTOM_SEARCH: ${{ env.CUSTOM_SEARCH }}
+          RECOVERY_SCAN: ${{ github.event.inputs.reset_session }}
           SETTINGS_CONFIG_URL: ${{ secrets.SETTINGS_CONFIG_URL }}
           SETTINGS_CONFIG_TOKEN: ${{ secrets.SETTINGS_CONFIG_TOKEN }}
         run: python main.py --once

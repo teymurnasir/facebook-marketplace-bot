@@ -222,6 +222,28 @@ class SessionNotificationsTest(unittest.TestCase):
         self.assertEqual(len(checks), 2)
         page.remove_listener.assert_called_once()
 
+    def test_login_and_checkpoint_diagnostics_do_not_expose_url_tokens(self):
+        for host, route, reason in (("www.facebook.com", "login", "login"),
+                                    ("www.facebook.com", "checkpoint", "checkpoint"),
+                                    ("m.facebook.com", "login", "login")):
+            page = Mock()
+            page.url = f"https://{host}/{route}/?secret=private-value"
+            with self.assertRaises(FacebookSessionError) as error:
+                self.scraper._raise_if_session_problem(page)
+            self.assertEqual(error.exception.reason, reason)
+            self.assertNotIn("private-value", str(error.exception))
+
+    def test_login_word_in_marketplace_query_is_not_a_login_redirect(self):
+        page = Mock()
+        page.url = "https://www.facebook.com/marketplace/toronto/search?query=/login"
+        page.get_by_text.return_value.count.return_value = 0
+        self.scraper._raise_if_session_problem(page)
+
+    def test_recovery_scan_is_not_labelled_as_an_automatic_scan(self):
+        with patch.dict(os.environ, {"RECOVERY_SCAN": "true"}):
+            self.run_scan()
+        self.assertIn("Facebook recovery scan started", self.messages()[0])
+
 
 if __name__ == "__main__":
     unittest.main()
