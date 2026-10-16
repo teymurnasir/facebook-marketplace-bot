@@ -1,0 +1,16 @@
+# Public MLS rental source; no browser, account or API subscription required.
+source: royallepage
+# The original map bounds supplied for this search (not the car search radius).
+search_url: https://www.realtor.ca/map#ZoomLevel=15&Center=43.774075%2C-79.472576&LatitudeMax=43.78250&LongitudeMax=-79.46356&LatitudeMin=43.76565&LongitudeMin=-79.48159&PropertyTypeGroupID=1&Sort=6-D&TransactionTypeId=2&PropertySearchTypeId=0&Currency=CAD
+min_rent: 2000
+max_rent: 4100
+min_bedrooms: 2
+building_type: House
+require_finished_basement: true
+require_separate_entrance: true
+# Exclude explicitly advertised basement-only / main-floor-only rentals.
+entire_house_only: true
+poll_interval_minutes: 180
+timeout_ms: 60000
+max_pages: 30
+request_delay_seconds: 1
