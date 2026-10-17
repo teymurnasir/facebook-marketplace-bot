@@ -525,12 +525,12 @@ function buildSearchFromWizard(draft) {
   return searches;
 }
 
-async function dispatchScan(env, jobId = null, workflow = "marketplace.yml") {
+async function dispatchScan(env, jobId = null) {
   const [owner, repo] = String(env.GITHUB_REPO).split("/");
   const body = { ref: "main" };
   if (jobId) body.inputs = { job_id: jobId };
   const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`,
+    `https://api.github.com/repos/${owner}/${repo}/actions/workflows/marketplace.yml/dispatches`,
     {
       method: "POST",
       headers: {
@@ -1888,26 +1888,6 @@ export default {
       const text = msg.text.trim();
       const cmd = text.split(/\s+/)[0].split("@")[0].toLowerCase();
 
-      if (cmd === "/rentals") {
-        if (!authorized(chatId, env)) {
-          await tg(env, "sendMessage", { chat_id: chatId, text: "Not authorized." });
-          return new Response("ok");
-        }
-        // Independent history, workflow and filters; Facebook session state does not apply.
-        const last = Number(await env.SETTINGS.get("last_rental_scan_at") || 0);
-        if (last && Date.now() - last < 5 * 60 * 1000) {
-          await tg(env, "sendMessage", { chat_id: chatId, text: "A rental scan was requested recently. Please wait five minutes before retrying." });
-          return new Response("ok");
-        }
-        await dispatchScan(env, null, "rentals.yml");
-        await env.SETTINGS.put("last_rental_scan_at", String(Date.now()));
-        await tg(env, "sendMessage", {
-          chat_id: chatId,
-          text: "🏠 Rental scan queued (Royal LePage MLS): House, 2+ bedrooms, CAD $2,000–$4,100/month, finished basement and separate entrance, within the supplied map area. Results or access failures will follow here.",
-        });
-        return new Response("ok");
-      }
-
       if (SESSION.has(cmd)) {
         if (!authorized(chatId, env)) {
           await tg(env, "sendMessage", { chat_id: chatId, text: "Not authorized." });
@@ -1945,7 +1925,6 @@ export default {
             "🇨🇦 <b>Canada Marketplace car alerts</b>\n\n" +
             "/scan — run saved filters\n" +
             "/cars — browse all saved findings\n" +
-            "/rentals — scan MLS house rentals\n" +
             "/session — last Facebook check and automatic scan pause\n" +
             "/settings — shared cars, km, locations+radius\n" +
             "/customsearch — one-off: city, radius, car, years, price, km\n" +

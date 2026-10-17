@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 
 
 COMMANDS = [
-    {"command": "rentals", "description": "Find house rentals from MLS listings"},
     {"command": "scan", "description": "Run Marketplace search now"},
     {"command": "cars", "description": "Browse all saved car findings"},
     {"command": "settings", "description": "View/change shared search filters"},

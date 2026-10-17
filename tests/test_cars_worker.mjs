@@ -10,13 +10,11 @@ async function fixture({ allowScans = false } = {}) {
   const values = new Map();
   const messages = [];
   const dispatches = [];
-  const dispatchUrls = [];
   const context = vm.createContext({
     URL, Response, TextEncoder, structuredClone,
     fetch: async (url, options) => {
       if (allowScans && String(url).startsWith("https://api.github.com/")) {
         dispatches.push(JSON.parse(options.body));
-        dispatchUrls.push(String(url));
         return new Response(null, { status: 204 });
       }
       assert.ok(String(url).startsWith("https://api.telegram.org/"), "Browsing cars must not dispatch scans");
@@ -51,7 +49,7 @@ async function fixture({ allowScans = false } = {}) {
     listing_id: String(100 + index), title: `Car ${index}`, search_name: "Mazda",
     url: "https://untrusted.invalid/", first_seen_at: "2026-10-07 08:00:00",
   }));
-  return { values, messages, dispatches, dispatchUrls, request, cars, findings, buildSearch: mod.namespace.buildSearchFromWizard };
+  return { values, messages, dispatches, request, cars, findings, buildSearch: mod.namespace.buildSearchFromWizard };
 }
 
 test("confirmed login failure silently pauses repeated automatic ticks without changing settings or cars", async () => {
@@ -258,27 +256,4 @@ test("older rows show missing details honestly and cannot inject HTML through da
   assert.match(text, /Last seen: not saved yet/);
   assert.match(text, /Safety: <b>unknown<\/b>/);
   assert.doesNotMatch(text, /<script>/);
-});
-
-
-test("rental command dispatches its own workflow, throttles repeats, and leaves Facebook state alone", async () => {
-  const f = await fixture({ allowScans: true });
-  await f.request("/session", { status: "inactive", scan_started_at: 2000 });
-  const session = f.values.get("facebook_session_status");
-  await f.cars("/rentals");
-  assert.equal(f.dispatches.length, 1);
-  assert.match(f.dispatchUrls[0], /workflows\/rentals\.yml\/dispatches$/);
-  assert.deepEqual(f.dispatches[0], { ref: "main" });
-  assert.match(f.messages.at(-1).text, /Rental scan queued/);
-  assert.equal(f.values.get("facebook_session_status"), session);
-  await f.cars("/rentals");
-  assert.equal(f.dispatches.length, 1);
-  assert.match(f.messages.at(-1).text, /five minutes/);
-});
-
-test("unauthorized chats cannot run rental scans", async () => {
-  const f = await fixture({ allowScans: true });
-  await f.cars("/rentals", 999);
-  assert.equal(f.dispatches.length, 0);
-  assert.equal(f.messages.at(-1).text, "Not authorized.");
 });
