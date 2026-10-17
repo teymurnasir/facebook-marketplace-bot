@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
@@ -26,6 +27,25 @@ def _desktop_chrome_user_agent(chrome_version: str) -> str:
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         f"Chrome/{version} Safari/537.36"
     )
+
+
+def is_marketplace_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (parsed.scheme == "https"
+            and parsed.hostname in {"www.facebook.com", "facebook.com", "m.facebook.com"}
+            and (parsed.path == "/marketplace" or parsed.path.startswith("/marketplace/")))
+
+
+def ready_marketplace_page(browser, context, page):
+    # input() blocks Playwright's event loop. Pump it before reading URL
+    # properties; otherwise a completed login still appears to be /login.
+    try:
+        page.wait_for_timeout(500)
+    except Exception:
+        if not browser.is_connected():
+            raise SystemExit("Login browser was closed; session was not saved.")
+    return next((candidate for candidate in context.pages
+                 if not candidate.is_closed() and is_marketplace_url(candidate.url)), None)
 
 
 def main() -> None:
@@ -47,11 +67,15 @@ def main() -> None:
         )
         page = context.new_page()
         page.goto("https://www.facebook.com/login", wait_until="domcontentloaded")
-        input("Press Enter after you are logged in and Marketplace loads… ")
-        if "/marketplace" not in page.url or "/login" in page.url or "/checkpoint" in page.url:
-            browser.close()
-            raise SystemExit("Marketplace is not open. Log in and open Marketplace before saving.")
-        write_session_state(out, context.storage_state())
+        while True:
+            input("Press Enter after you are logged in and Marketplace loads… ")
+            marketplace = ready_marketplace_page(browser, context, page)
+            if marketplace is None:
+                print("Marketplace is not open yet. The browser will stay open. "
+                      "Finish login, open Marketplace, then press Enter again.")
+                continue
+            write_session_state(out, context.storage_state())
+            break
         browser.close()
 
     print(f"Saved session → {out.resolve()}")
